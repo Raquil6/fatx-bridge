@@ -1,0 +1,30 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FatxBridge.Core", "fatx-core\FatxBridge.Core.csproj", "{F1F9D65D-A802-4B6D-8941-831D6385AF01}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FatxBridge.Windows", "app\FatxBridge.Windows.csproj", "{CE1FC8D1-FFAA-4DEE-9D35-2130C27457B4}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FatxBridge.Tests", "tests\FatxBridge.Tests\FatxBridge.Tests.csproj", "{9F2B0346-158E-4BE6-8306-54CE2CABA0D2}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{F1F9D65D-A802-4B6D-8941-831D6385AF01}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F1F9D65D-A802-4B6D-8941-831D6385AF01}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F1F9D65D-A802-4B6D-8941-831D6385AF01}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F1F9D65D-A802-4B6D-8941-831D6385AF01}.Release|Any CPU.Build.0 = Release|Any CPU
+		{CE1FC8D1-FFAA-4DEE-9D35-2130C27457B4}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{CE1FC8D1-FFAA-4DEE-9D35-2130C27457B4}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{CE1FC8D1-FFAA-4DEE-9D35-2130C27457B4}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{CE1FC8D1-FFAA-4DEE-9D35-2130C27457B4}.Release|Any CPU.Build.0 = Release|Any CPU
+		{9F2B0346-158E-4BE6-8306-54CE2CABA0D2}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9F2B0346-158E-4BE6-8306-54CE2CABA0D2}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9F2B0346-158E-4BE6-8306-54CE2CABA0D2}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9F2B0346-158E-4BE6-8306-54CE2CABA0D2}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal

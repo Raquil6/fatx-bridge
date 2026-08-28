@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <OutputType>WinExe</OutputType>
+    <AssemblyName>FatxBridge</AssemblyName>
+    <RootNamespace>FatxBridge.Windows</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Version>0.2.0-beta.1</Version>
+    <PackageVersion>0.2.0-beta.1</PackageVersion>
+    <AssemblyVersion>0.2.0.0</AssemblyVersion>
+    <FileVersion>0.2.0.0</FileVersion>
+    <InformationalVersion>0.2.0-beta.1</InformationalVersion>
+    <Product>FATX Bridge</Product>
+    <AssemblyTitle>FATX Bridge</AssemblyTitle>
+    <Description>Free FATX drive access for Windows</Description>
+    <Copyright>Copyright © 2026 FATX Bridge contributors</Copyright>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\fatx-core\FatxBridge.Core.csproj" />
+    <PackageReference Include="winfsp.net" Version="2.1.25156" />
+  </ItemGroup>
+</Project>

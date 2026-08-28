@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>FatxBridge.Core</AssemblyName>
+    <RootNamespace>FatxBridge.Core</RootNamespace>
+  </PropertyGroup>
+</Project>
