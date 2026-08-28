@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.0 Beta 2
+
+- Added a one-click Windows installer with Start menu and optional desktop shortcuts.
+- Changed release packages to self-contained .NET builds.
+- Added automatic installation of the stable signed WinFsp 2.1 runtime when missing.
+- Added beginner-friendly installation, first-use, and troubleshooting documentation.
+- Documented the optional third-party BadStorage fork and its verified limits and caveats.
+
 ## 0.2.0 Beta
 
 - Introduced the independent FATX Bridge product identity and public MIT-licensed project structure.

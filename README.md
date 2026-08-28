@@ -2,7 +2,39 @@
 
 **Free FATX drive access for Windows.**
 
+[![Build and test](https://github.com/Lomzlomz/fatx-bridge/actions/workflows/build.yml/badge.svg)](https://github.com/Lomzlomz/fatx-bridge/actions/workflows/build.yml)
+[![Release](https://img.shields.io/github/v/release/Lomzlomz/fatx-bridge?include_prereleases)](https://github.com/Lomzlomz/fatx-bridge/releases)
+[![License](https://img.shields.io/github/license/Lomzlomz/fatx-bridge)](LICENSE)
+
 FATX Bridge is a free Windows utility for accessing Xbox 360 FATX storage. It detects supported physical disks, validates their FATX partition layouts, browses files inside the app, and mounts the Content partition in File Explorer through WinFsp.
+
+## Install FATX Bridge
+
+### Recommended: Windows installer
+
+1. Open the [FATX Bridge 0.2.0 Beta 2 release](https://github.com/Lomzlomz/fatx-bridge/releases/tag/v0.2.0-beta.2).
+2. Download `FATXBridge-0.2.0-beta.2-Setup.exe`.
+3. Run the installer and approve the Windows administrator prompt.
+4. Leave **Launch FATX Bridge** selected, or open it later by searching for **FATX Bridge** in the Start menu.
+
+The installer contains the self-contained .NET application and installs the signed WinFsp 2.1 Core runtime when WinFsp is not already present. You do not need Visual Studio, the .NET SDK, or a separate .NET download. Uninstalling FATX Bridge does not remove WinFsp because other filesystem applications may use the same driver.
+
+The beta installer is not code-signed yet, so Windows SmartScreen may identify it as an unknown publisher. Only continue if it came from this repository's Releases page and its SHA-256 matches the value published with the release.
+
+### Portable installation
+
+1. Install the stable [WinFsp 2.1 MSI](https://github.com/winfsp/winfsp/releases/download/v2.1/winfsp-2.1.25156.msi) with its default **Core** feature.
+2. Download `FATXBridge-0.2.0-beta.2-win-x64-portable.zip` from the [release](https://github.com/Lomzlomz/fatx-bridge/releases/tag/v0.2.0-beta.2).
+3. Right-click the ZIP, select **Extract All**, and run `FatxBridge.exe` from the extracted folder.
+
+The portable build also includes .NET, but it cannot mount a drive until the signed WinFsp driver is installed. See [docs/INSTALL.md](docs/INSTALL.md) for troubleshooting and manual verification.
+
+### First use
+
+1. Shut down the Xbox 360 and connect its FATX disk to the PC directly or through a compatible USB-to-SATA adapter.
+2. Open FATX Bridge from the Start menu and approve the administrator prompt used by its narrowly scoped physical-drive helper.
+3. Select the detected disk and Content partition.
+4. Choose a read-only mount first. Use experimental read/write mode only after making a backup.
 
 ## Features
 
@@ -14,12 +46,28 @@ FATX Bridge is a free Windows utility for accessing Xbox 360 FATX storage. It de
 - Uses buffered, bounded writes designed for practical large-file transfer speeds.
 - Makes no network requests and includes no telemetry.
 
-## Requirements
+## System requirements
 
 - Windows 10 or later, 64-bit.
-- [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0) to run a framework-dependent build, or the .NET 10 SDK to build from source.
-- The signed [WinFsp](https://github.com/winfsp/winfsp) runtime. Install its Core feature before mounting a drive.
+- The signed [WinFsp](https://github.com/winfsp/winfsp) Core runtime. The recommended installer handles this automatically.
 - Administrator approval when opening a protected physical disk. The mounted File Explorer view runs in the desktop user's session.
+
+The published installer and portable package are self-contained and do not require a separate .NET installation. Building from source requires the .NET 10 SDK.
+
+## Large internal drives with BadStorage
+
+Advanced users running the Xbox 360 **Bad Update** exploit may be interested in [Angelpro09xd/BadStorage](https://github.com/Angelpro09xd/BadStorage), a third-party fork that adds support for disks that never passed the console's security-sector check. Its project page advertises support for up to 2 TB and reports testing from a 240 GB SSD through a 1 TB hard disk.
+
+The fork requires a retail Xbox 360 on kernel 17559 with Bad Update and XeUnshackle. Follow its instructions exactly. Its README says holding LT can reformat the disk from the console; after the console creates the FATX layout, shut it down fully, connect the disk to the PC, and open it with FATX Bridge. A normally structured Xbox 360 FATX disk should then be detectable without HDD Maker or SSD Maker metadata.
+
+Important limitations from the BadStorage project:
+
+- Its in-memory changes must be applied again after a cold reboot or shutdown.
+- An unauthenticated internal disk cannot itself provide an exploit entry point that needs to read from that disk before the bypass runs; USB-based entry points are unaffected.
+- FATX Bridge does not install, modify, or provide support for Bad Update, XeUnshackle, or BadStorage.
+- Back up existing data before formatting or experimenting with an internal disk.
+
+BadStorage is an independent project and is not maintained or endorsed by FATX Bridge.
 
 ## Build and verify
 
@@ -27,6 +75,12 @@ FATX Bridge is a free Windows utility for accessing Xbox 360 FATX storage. It de
 dotnet build .\FatxBridge.sln -c Release
 dotnet run --project .\tests\FatxBridge.Tests\FatxBridge.Tests.csproj -c Release
 Start-Process .\app\bin\Release\net10.0-windows\FatxBridge.exe -Verb RunAs
+```
+
+To build the self-contained portable package and installer, install Inno Setup 6 or 7 and run:
+
+```powershell
+.\build\Build-Release.ps1
 ```
 
 The automated tests use disposable synthetic streams. The broker and mount probes create temporary FATX images and do not open a physical disk for writing.

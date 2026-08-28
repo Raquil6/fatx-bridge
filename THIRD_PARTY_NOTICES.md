@@ -4,7 +4,7 @@ FATX Bridge depends on software maintained by other projects. Their licenses app
 
 ## WinFsp and winfsp.net
 
-FATX Bridge references `winfsp.net` version 2.1.25156 and requires an installed WinFsp runtime.
+FATX Bridge references `winfsp.net` version 2.1.25156 and requires an installed WinFsp runtime. The recommended FATX Bridge installer redistributes the official, unmodified `winfsp-2.1.25156.msi` and installs it only when WinFsp is missing.
 
 Copyright 2015–2026 Bill Zissimopoulos and WinFsp contributors.
 
@@ -14,6 +14,17 @@ WinFsp is distributed under the GNU General Public License version 3 with a spec
 - License: https://github.com/winfsp/winfsp/blob/master/License.txt
 
 The WinFsp runtime is not maintained by the FATX Bridge project.
+
+## Microsoft .NET
+
+The self-contained FATX Bridge packages redistribute components of the Microsoft .NET 10 runtime.
+
+Copyright Microsoft Corporation and .NET contributors.
+
+.NET runtime components are distributed under the MIT License. Source and license information:
+
+- Project: https://github.com/dotnet/runtime
+- License: https://github.com/dotnet/runtime/blob/main/LICENSE.TXT
 
 ## Design references
 
