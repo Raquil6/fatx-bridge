@@ -9,6 +9,12 @@ var tests = new (string Name, Action Run)[]
     ("invalid signature/header rejection", InvalidHeaderRejected),
     ("out-of-range and cyclic chain rejection", BadChainsRejected),
     ("standard offset sparse partition detection", StandardOffsetDetection),
+    ("original Xbox fixed HDD partition detection", OriginalXboxFixedPartitionDetection),
+    ("original Xbox XBPartitioner extended partition detection", OriginalXboxPartitionTableDetection),
+    ("original Xbox legacy F-takes-all detection", OriginalXboxLegacyExtendedDetection),
+    ("original Xbox whole-device memory unit detection", OriginalXboxMemoryUnitDetection),
+    ("invalid XBPartitioner entries are never advertised", InvalidOriginalXboxPartitionTableRejected),
+    ("corrupt XBPartitioner tables block guessed extended bounds", CorruptOriginalXboxPartitionTableBlocksFallback),
     ("deleted directory entry filtering", DeletedEntriesIgnored),
     ("truncated stream handling", TruncatedStreamRejected),
     ("canonical 2 GiB FAT32 geometry", CanonicalLargeGeometry),
@@ -26,6 +32,7 @@ var tests = new (string Name, Action Run)[]
     ("empty files retain a valid cluster and survive reopen", EmptyFileAndReopen),
     ("directory growth spans FATX clusters", DirectoryGrowth),
     ("FATX packed timestamps", PackedTimestamps),
+    ("original Xbox FATX timestamps use the 2000 epoch", OriginalXboxPackedTimestamps),
     ("directory descendant moves are refused", DescendantMoveRefusal),
     ("disk-full writes preserve existing files", DiskFullPreservesExistingFiles),
     ("failed create preserves unrelated data", FailedCreatePreservesSentinel),
@@ -104,6 +111,100 @@ static void StandardOffsetDetection()
     FatxFixture.WriteVolume(disk, offset, length, FatxByteOrder.BigEndian, 32);
     IReadOnlyList<FatxPartitionCandidate> found = FatxPartitionProbe.DetectStandardRetailPartitions(disk);
     Assert(found.Count == 1 && found[0].Name == "Cache 0", "standard Cache 0 was not detected");
+}
+
+static void OriginalXboxFixedPartitionDetection()
+{
+    const long offset = 0xABE80000;
+    const long length = 0x1312D6000;
+    using var disk = new SparseStream(offset + length);
+    FatxFixture.WriteVolume(disk, offset, length, FatxByteOrder.LittleEndian, 32);
+    FatxStorageDetection detection = FatxPartitionProbe.DetectSupportedStorage(disk)
+        ?? throw new InvalidOperationException("original Xbox HDD was not classified");
+    Assert(detection.Kind == FatxStorageKind.OriginalXboxHardDrive, "original Xbox HDD was not classified");
+    FatxPartitionCandidate partition = detection.Partitions.Single();
+    Assert(partition.Name == "E (Data)" && partition.Offset == offset, "original Xbox E partition was not detected");
+    Assert(partition.SupportsWrite, "validated original Xbox partitions should expose experimental write mounting");
+}
+
+static void OriginalXboxPartitionTableDetection()
+{
+    const long offset = 0x200000;
+    const long length = 0x2000000;
+    using var disk = new SparseStream(0x4000000);
+    WriteXbPartitionEntry(disk, 5, "XBOX F", offset, length, active: true);
+    FatxFixture.WriteVolume(disk, offset, length, FatxByteOrder.LittleEndian, 8);
+
+    FatxStorageDetection detection = FatxPartitionProbe.DetectSupportedStorage(disk)
+        ?? throw new InvalidOperationException("XBPartitioner disk was not classified");
+    Assert(detection.Kind == FatxStorageKind.OriginalXboxHardDrive, "XBPartitioner disk was not classified");
+    FatxPartitionCandidate partition = detection.Partitions.Single();
+    Assert(partition.Name == "F (Extended)" && partition.Offset == offset && partition.Length == length,
+        "XBPartitioner F bounds were not honored");
+}
+
+static void OriginalXboxLegacyExtendedDetection()
+{
+    const long offset = 0x1DD156000;
+    const long length = 0x4000000;
+    using var disk = new SparseStream(offset + length);
+    FatxFixture.WriteVolume(disk, offset, length, FatxByteOrder.LittleEndian, 8);
+    IReadOnlyList<FatxPartitionCandidate> found = FatxPartitionProbe.DetectOriginalXboxPartitions(disk);
+    Assert(found.Count == 1 && found[0].Name == "F (Extended)" && found[0].Length == length,
+        "legacy F-takes-all partition was not detected");
+}
+
+static void OriginalXboxMemoryUnitDetection()
+{
+    const long length = 8 * 1024 * 1024;
+    using var memoryUnit = new SparseStream(length);
+    FatxFixture.WriteVolume(memoryUnit, 0, length, FatxByteOrder.LittleEndian, 4, 4096);
+    FatxStorageDetection detection = FatxPartitionProbe.DetectSupportedStorage(memoryUnit)
+        ?? throw new InvalidOperationException("whole-device FATX memory unit was not classified");
+    Assert(detection.Kind == FatxStorageKind.OriginalXboxMemoryUnit, "whole-device FATX memory unit was not classified");
+    FatxPartitionCandidate partition = detection.Partitions.Single();
+    Assert(partition.Offset == 0 && partition.Length == length && partition.SupportsWrite,
+        "memory-unit bounds or write capability are incorrect");
+    Assert(partition.Metadata.SectorSize == 4096 && partition.Metadata.DataOffset == 0x2000 &&
+        partition.Metadata.SectorsPerCluster == 4,
+        "memory-unit geometry did not use 4 KiB logical sectors");
+}
+
+static void InvalidOriginalXboxPartitionTableRejected()
+{
+    using var disk = new SparseStream(0x1000000);
+    WriteXbPartitionEntry(disk, 5, "XBOX F", 0x800000, 0x1000000, active: true);
+    IReadOnlyList<FatxPartitionCandidate> found = FatxPartitionProbe.DetectOriginalXboxPartitions(disk);
+    Assert(found.Count == 0, "out-of-range XBPartitioner entry was advertised");
+}
+
+static void CorruptOriginalXboxPartitionTableBlocksFallback()
+{
+    const long fallbackOffset = 0x1DD156000;
+    const long fallbackLength = 0x4000000;
+    using var disk = new SparseStream(fallbackOffset + fallbackLength);
+    WriteXbPartitionEntry(disk, 5, "XBOX F", 0x100000, 0x200000, active: true);
+    WriteXbPartitionEntry(disk, 6, "XBOX G", 0x180000, 0x200000, active: true);
+    FatxFixture.WriteVolume(disk, fallbackOffset, fallbackLength, FatxByteOrder.LittleEndian, 8);
+    IReadOnlyList<FatxPartitionCandidate> found = FatxPartitionProbe.DetectOriginalXboxPartitions(disk);
+    Assert(found.Count == 0, "a corrupt XBPartitioner table allowed guessed overlapping extended bounds");
+}
+
+static void WriteXbPartitionEntry(SparseStream disk, int index, string name, long offset, long length, bool active)
+{
+    if (offset % 512 != 0 || length % 512 != 0) throw new ArgumentException("XBPartitioner bounds must be sector aligned.");
+    byte[] table = new byte[0x1000];
+    disk.Position = 0;
+    _ = disk.Read(table);
+    "****PARTINFO****"u8.CopyTo(table);
+    int entryOffset = 48 + index * 32;
+    int nameLength = Math.Min(16, name.Length);
+    System.Text.Encoding.ASCII.GetBytes(name.AsSpan(0, nameLength), table.AsSpan(entryOffset, nameLength));
+    BinaryPrimitives.WriteUInt32LittleEndian(table.AsSpan(entryOffset + 16, 4), active ? 0x80000000u : 0);
+    BinaryPrimitives.WriteUInt32LittleEndian(table.AsSpan(entryOffset + 20, 4), checked((uint)(offset / 512)));
+    BinaryPrimitives.WriteUInt32LittleEndian(table.AsSpan(entryOffset + 24, 4), checked((uint)(length / 512)));
+    disk.Position = 0;
+    disk.Write(table);
 }
 
 static void DeletedEntriesIgnored()
@@ -311,6 +412,18 @@ static void PackedTimestamps()
     Assert(FatxVolume.DecodeTimestamp(0) is null, "zero FATX timestamp must remain unset");
 }
 
+static void OriginalXboxPackedTimestamps()
+{
+    var source = new DateTimeOffset(2024, 2, 3, 4, 5, 7, TimeSpan.Zero);
+    uint packed = FatxVolume.EncodeTimestamp(source, FatxByteOrder.LittleEndian);
+    DateTimeOffset decoded = FatxVolume.DecodeTimestamp(packed, FatxByteOrder.LittleEndian)
+        ?? throw new InvalidOperationException("original Xbox timestamp did not decode");
+    Assert(decoded == new DateTimeOffset(2024, 2, 3, 4, 5, 6, TimeSpan.Zero),
+        "original Xbox FATX timestamp epoch is incorrect");
+    Assert(FatxVolume.DecodeTimestamp(packed, FatxByteOrder.BigEndian)?.Year == 2004,
+        "timestamp byte order did not select a platform-specific epoch");
+}
+
 static void DescendantMoveRefusal()
 {
     using var fixture = FatxFixture.Create(2 * 1024 * 1024);
@@ -435,10 +548,10 @@ sealed class FatxFixture : IDisposable
     private readonly int clusterBytes;
     private readonly int entryBytes;
     private readonly FatxByteOrder order;
-    private FatxFixture(SparseStream stream, long offset, long length, long dataOffset, long count, FatxAllocationTable table, FatxByteOrder order, uint sectorsPerCluster)
+    private FatxFixture(SparseStream stream, long offset, long length, long dataOffset, long count, FatxAllocationTable table, FatxByteOrder order, uint sectorsPerCluster, int sectorSize)
     {
         this.stream = stream; this.offset = offset; this.length = length; this.dataOffset = dataOffset; ClusterCount = count; Table = table; this.order = order;
-        clusterBytes = checked((int)sectorsPerCluster * 512); entryBytes = table == FatxAllocationTable.Fat16 ? 2 : 4;
+        clusterBytes = checked((int)sectorsPerCluster * sectorSize); entryBytes = table == FatxAllocationTable.Fat16 ? 2 : 4;
     }
     public long ClusterCount { get; }
     public Stream Stream => stream;
@@ -451,10 +564,10 @@ sealed class FatxFixture : IDisposable
         var stream = new SparseStream(length);
         return WriteVolume(stream, 0, length, FatxByteOrder.LittleEndian, 2);
     }
-    public static FatxFixture WriteVolume(SparseStream stream, long offset, long length, FatxByteOrder order, uint sectorsPerCluster)
+    public static FatxFixture WriteVolume(SparseStream stream, long offset, long length, FatxByteOrder order, uint sectorsPerCluster, int sectorSize = 512)
     {
-        (FatxAllocationTable table, long count, long data) = KnownGeometry(length, sectorsPerCluster);
-        var fixture = new FatxFixture(stream, offset, length, data, count, table, order, sectorsPerCluster);
+        (FatxAllocationTable table, long count, long data) = KnownGeometry(length, sectorsPerCluster, sectorSize);
+        var fixture = new FatxFixture(stream, offset, length, data, count, table, order, sectorsPerCluster, sectorSize);
         Span<byte> header = stackalloc byte[Header];
         (order == FatxByteOrder.LittleEndian ? "FATX"u8 : "XTAF"u8).CopyTo(header);
         WriteUInt(header.Slice(4, 4), 0x11223344, order);
@@ -491,9 +604,9 @@ sealed class FatxFixture : IDisposable
     public void Dispose() => stream.Dispose();
     // Deliberately direct fixture math (not the parser's old fixed-point algorithm): these
     // values model the documented chain map, then golden tests assert known on-disk addresses.
-    private static (FatxAllocationTable, long, long) KnownGeometry(long length, uint sectorsPerCluster)
+    private static (FatxAllocationTable, long, long) KnownGeometry(long length, uint sectorsPerCluster, int sectorSize = 512)
     {
-        long bytesPerCluster = checked((long)sectorsPerCluster * 512);
+        long bytesPerCluster = checked((long)sectorsPerCluster * sectorSize);
         long mapEntries = length / bytesPerCluster + 1;
         FatxAllocationTable table = mapEntries < 0xFFF0 ? FatxAllocationTable.Fat16 : FatxAllocationTable.Fat32;
         long fatBytes = mapEntries * (table == FatxAllocationTable.Fat16 ? 2 : 4);

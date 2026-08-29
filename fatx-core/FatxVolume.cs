@@ -5,7 +5,7 @@ namespace FatxBridge.Core;
 
 public enum FatxByteOrder { LittleEndian, BigEndian }
 public enum FatxAllocationTable { Fat16, Fat32 }
-public sealed record FatxVolumeMetadata(uint SerialNumber, uint SectorsPerCluster, uint RootFirstCluster, FatxByteOrder ByteOrder, FatxAllocationTable AllocationTable, long PartitionOffset, long PartitionLength, long FatOffset, long DataOffset, long ClusterCount);
+public sealed record FatxVolumeMetadata(uint SerialNumber, uint SectorsPerCluster, uint RootFirstCluster, FatxByteOrder ByteOrder, FatxAllocationTable AllocationTable, long PartitionOffset, long PartitionLength, long FatOffset, long DataOffset, long ClusterCount, int SectorSize);
 public sealed record FatxDirectoryEntry(string Name, byte Attributes, uint FirstCluster, uint FileSize, uint CreationTimestamp, uint LastWriteTimestamp, uint LastAccessTimestamp) { public bool IsDirectory => (Attributes & 0x10) != 0; }
 public sealed record FatxPathEntry(string Path, FatxDirectoryEntry Entry);
 public sealed class FatxFormatException : IOException { public FatxFormatException(string message) : base(message) { } }
@@ -13,7 +13,7 @@ public sealed class FatxFormatException : IOException { public FatxFormatExcepti
 /// <summary>A partition-bounded FATX volume. FATX is non-journaled: writes are carefully ordered but cannot be crash-atomic.</summary>
 public sealed class FatxVolume
 {
-    private const int SectorSize = 512, HeaderSize = 0x1000, RawAlignment = 0x1000, EntrySize = 0x40, MaximumDirectoryEntries = 4096;
+    private const int HeaderSize = 0x1000, RawAlignment = 0x1000, EntrySize = 0x40, MaximumDirectoryEntries = 4096;
     private static readonly Encoding Ascii = Encoding.ASCII;
     private readonly Stream source;
     private readonly object mutationGate = new();
@@ -26,7 +26,7 @@ public sealed class FatxVolume
     private FatxVolume(Stream source, FatxVolumeMetadata metadata) { this.source = source; Metadata = metadata; }
     public FatxVolumeMetadata Metadata { get; }
     public bool CanWrite => source.CanWrite;
-    public long ClusterSize => checked((long)Metadata.SectorsPerCluster * SectorSize);
+    public long ClusterSize => checked((long)Metadata.SectorsPerCluster * Metadata.SectorSize);
     public long TotalSize => checked(Metadata.ClusterCount * ClusterSize);
     public long FreeSpace { get { lock (mutationGate) return checked(CountFreeClusters() * ClusterSize); } }
     /// <summary>
@@ -38,35 +38,44 @@ public sealed class FatxVolume
     public long ReportedFreeSpace { get { lock (mutationGate) return cachedFreeClusterCount is long count ? checked(count * ClusterSize) : TotalSize; } }
     public long UsedSpace => TotalSize - FreeSpace;
 
-    public static FatxVolume Open(Stream source, long partitionOffset, long partitionLength, long? sourceLength = null)
+    public static FatxVolume Open(Stream source, long partitionOffset, long partitionLength, long? sourceLength = null, int sectorSize = 512)
     {
         ArgumentNullException.ThrowIfNull(source);
         if (!source.CanRead || !source.CanSeek) throw new ArgumentException("The FATX source must be readable and seekable.", nameof(source));
+        if (sectorSize is not (512 or 4096))
+            throw new ArgumentOutOfRangeException(nameof(sectorSize), "FATX logical sectors must be 512 or 4096 bytes.");
         long total = sourceLength ?? source.Length;
         if (partitionOffset < 0 || partitionLength < HeaderSize || !Within(partitionOffset, partitionLength, total)) throw new FatxFormatException("The partition range is outside the source stream.");
         var header = new byte[HeaderSize]; ReadAt(source, partitionOffset, header, partitionOffset, partitionLength);
         FatxByteOrder order = header.AsSpan(0, 4).SequenceEqual("FATX"u8) ? FatxByteOrder.LittleEndian : header.AsSpan(0, 4).SequenceEqual("XTAF"u8) ? FatxByteOrder.BigEndian : throw new FatxFormatException("The partition does not have a FATX signature.");
         uint spc = U32(header.AsSpan(8, 4), order), root = U32(header.AsSpan(12, 4), order);
         if (spc is not (2 or 4 or 8 or 16 or 32 or 64 or 128)) throw new FatxFormatException("FATX sectors-per-cluster is invalid.");
-        var layout = Layout(partitionLength, checked((long)spc * SectorSize));
+        var layout = Layout(partitionLength, checked((long)spc * sectorSize));
         if (root is 0 || root > layout.Count) throw new FatxFormatException("The FATX root cluster is outside the data area.");
-        var result = new FatxVolume(source, new FatxVolumeMetadata(U32(header.AsSpan(4, 4), order), spc, root, order, layout.Table, partitionOffset, partitionLength, partitionOffset + HeaderSize, partitionOffset + layout.Data, layout.Count));
+        var result = new FatxVolume(source, new FatxVolumeMetadata(U32(header.AsSpan(4, 4), order), spc, root, order, layout.Table, partitionOffset, partitionLength, partitionOffset + HeaderSize, partitionOffset + layout.Data, layout.Count, sectorSize));
         if (result.ReadFat(0) != result.Media) throw new FatxFormatException("The FATX allocation-table media marker is invalid.");
         return result;
     }
 
-    /// <summary>Encodes the FATX packed date/time representation (UTC, 1980-2107, two-second precision).</summary>
-    public static uint EncodeTimestamp(DateTimeOffset value)
+    /// <summary>Encodes the Xbox 360 FATX packed date/time representation (UTC, 1980-based, two-second precision).</summary>
+    public static uint EncodeTimestamp(DateTimeOffset value) => EncodeTimestamp(value, FatxByteOrder.BigEndian);
+
+    /// <summary>Encodes the platform-specific FATX packed date/time representation.</summary>
+    public static uint EncodeTimestamp(DateTimeOffset value, FatxByteOrder byteOrder)
     {
         DateTime utc = value.UtcDateTime;
-        if (utc.Year < 1980) utc = new DateTime(1980, 1, 1, 0, 0, 0, DateTimeKind.Utc);
-        if (utc.Year > 2107) utc = new DateTime(2107, 12, 31, 23, 59, 58, DateTimeKind.Utc);
-        return checked((uint)(((utc.Year - 1980) << 25) | (utc.Month << 21) | (utc.Day << 16) |
+        int epoch = byteOrder == FatxByteOrder.LittleEndian ? 2000 : 1980;
+        if (utc.Year < epoch) utc = new DateTime(epoch, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        if (utc.Year > epoch + 127) utc = new DateTime(epoch + 127, 12, 31, 23, 59, 58, DateTimeKind.Utc);
+        return checked((uint)(((utc.Year - epoch) << 25) | (utc.Month << 21) | (utc.Day << 16) |
             (utc.Hour << 11) | (utc.Minute << 5) | (utc.Second / 2)));
     }
 
-    /// <summary>Decodes a FATX packed date/time. Zero and malformed values have no usable timestamp.</summary>
-    public static DateTimeOffset? DecodeTimestamp(uint value)
+    /// <summary>Decodes an Xbox 360 FATX packed date/time. Zero and malformed values have no usable timestamp.</summary>
+    public static DateTimeOffset? DecodeTimestamp(uint value) => DecodeTimestamp(value, FatxByteOrder.BigEndian);
+
+    /// <summary>Decodes a platform-specific FATX packed date/time.</summary>
+    public static DateTimeOffset? DecodeTimestamp(uint value, FatxByteOrder byteOrder)
     {
         if (value == 0) return null;
         int second = checked((int)(value & 0x1F)) * 2;
@@ -74,7 +83,8 @@ public sealed class FatxVolume
         int hour = checked((int)((value >> 11) & 0x1F));
         int day = checked((int)((value >> 16) & 0x1F));
         int month = checked((int)((value >> 21) & 0x0F));
-        int year = checked((int)((value >> 25) & 0x7F)) + 1980;
+        int epoch = byteOrder == FatxByteOrder.LittleEndian ? 2000 : 1980;
+        int year = checked((int)((value >> 25) & 0x7F)) + epoch;
         try { return new DateTimeOffset(year, month, day, hour, minute, second, TimeSpan.Zero); }
         catch (ArgumentOutOfRangeException) { return null; }
     }
@@ -355,7 +365,7 @@ public sealed class FatxVolume
     private uint Last => Metadata.AllocationTable == FatxAllocationTable.Fat16 ? 0xFFFFu : 0xFFFFFFFFu;
     private long ClusterOffset(uint c) => checked(Metadata.DataOffset + ((long)c - 1) * ClusterSize);
     private void EnsureWritable() { if (!source.CanWrite) throw new UnauthorizedAccessException("This FATX volume was opened read-only."); }
-    private static uint Now() => EncodeTimestamp(DateTimeOffset.UtcNow);
+    private uint Now() => EncodeTimestamp(DateTimeOffset.UtcNow, Metadata.ByteOrder);
     private static string CanonicalPath(string path) { if (string.IsNullOrWhiteSpace(path)) throw new ArgumentException("A FATX path is required.", nameof(path)); string p = path.Replace('\\', '/').Trim(); if (!p.StartsWith('/')) p = "/" + p; if (p.Contains("//", StringComparison.Ordinal) || p.Split('/').Any(x => x is "." or "..")) throw new ArgumentException("The FATX path is invalid.", nameof(path)); return p.Length == 1 ? p : p.TrimEnd('/'); }
     private static void ValidateName(string name) { if (name.Length is < 1 or > 42 || name.Any(c => c > 0x7F || c < 0x20 || c is '/' or '\\' or '"' or '*' or ':' or '<' or '>' or '?' or '|')) throw new ArgumentException("FATX names must be 1–42 ASCII bytes and cannot contain separators, controls, or Xbox-invalid characters.", nameof(name)); }
     private static (FatxAllocationTable Table, long Count, long Data) Layout(long length, long cluster) { long entries = length / cluster + 1; if (entries is < 2 or > 0x0FFFFFFF) throw new FatxFormatException("The FATX allocation-table size is impossible."); FatxAllocationTable table = entries < 0xFFF0 ? FatxAllocationTable.Fat16 : FatxAllocationTable.Fat32; long data = HeaderSize + Align(entries * (table == FatxAllocationTable.Fat16 ? 2 : 4), HeaderSize); long count = (length - data) / cluster; if (data >= length || count < 1 || count > entries - 1) throw new FatxFormatException("The FATX data-cluster range is impossible."); return (table, count, data); }

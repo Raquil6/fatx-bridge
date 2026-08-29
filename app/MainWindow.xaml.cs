@@ -37,7 +37,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public bool IsNotBusy => !IsBusy && mount is null;
     public bool CanOpen => SelectedDrive is not null && !IsBusy;
     public bool CanMount => SelectedDrive is not null && SelectedPartition is not null && mount is null && !IsBusy;
-    public bool CanMountReadWrite => CanMount && string.Equals(SelectedPartition!.Name, "Content", StringComparison.Ordinal);
+    public bool CanMountReadWrite => CanMount && SelectedPartition!.Candidate.SupportsWrite;
     public bool IsMounted => mount is not null;
     public bool IsPartitionView => PartitionPanel.Visibility == Visibility.Visible;
     public bool CanNavigateBack => IsPartitionView && !IsBusy && mount is null;
@@ -111,7 +111,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             {
                 if (driveBroker is null) throw new IOException("The physical-drive helper is not running.");
                 using FileStream source = driveBroker.OpenAsync(path, readOnly: true).GetAwaiter().GetResult();
-                return FatxVolume.Open(source, partition.Candidate.Offset, partition.Candidate.Length, capacity).ListRootDirectory();
+                return FatxVolume.Open(source, partition.Candidate.Offset, partition.Candidate.Length, capacity,
+                    partition.Candidate.Metadata.SectorSize).ListRootDirectory();
             });
             if (generation != Interlocked.Read(ref rootLoadGeneration) || !IsPartitionView || !ReferenceEquals(partition, SelectedPartition))
                 return;
@@ -129,9 +130,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private async void MountReadWrite_Click(object sender, RoutedEventArgs e)
     {
-        if (SelectedDrive is null || SelectedPartition is null || !string.Equals(SelectedPartition.Name, "Content", StringComparison.Ordinal)) return;
+        if (SelectedDrive is null || SelectedPartition is null || !SelectedPartition.Candidate.SupportsWrite) return;
         MessageBoxResult confirmation = MessageBox.Show(this,
-            $"Experimental write access will mount {SelectedDrive.Path}, partition Content, as a Windows drive. " +
+            $"Experimental write access will mount {SelectedDrive.Path}, partition {SelectedPartition.Name}, as a Windows drive. " +
             "Corruption or data loss is possible, including if power is lost. Continue only if you have a backup.",
             "Confirm experimental FATX write mount", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
         if (confirmation == MessageBoxResult.Yes) await MountAsync(readOnly: false);
@@ -202,7 +203,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 public sealed record PartitionItem(FatxPartitionCandidate Candidate)
 {
     public string Name => Candidate.Name;
-    public string Details => $"0x{Candidate.Offset:X} • {Candidate.Metadata.AllocationTable} • cluster {Candidate.Metadata.RootFirstCluster}";
+    public string Details => $"0x{Candidate.Offset:X} • {Candidate.Metadata.ByteOrder} • {Candidate.Metadata.SectorSize}-byte sectors • {Candidate.Metadata.AllocationTable} • cluster {Candidate.Metadata.RootFirstCluster}";
 }
 public sealed record DirectoryItem(FatxDirectoryEntry Entry)
 {

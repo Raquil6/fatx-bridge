@@ -32,3 +32,10 @@ The following MIT-licensed projects were consulted as FATX format design referen
 
 - `emoose/xbox-winfsp`: https://github.com/emoose/xbox-winfsp
 - `aerosoul94/FATXTools`: https://github.com/aerosoul94/FATXTools
+
+The original Xbox fixed-layout, XBPartitioner, memory-unit, and timestamp behavior was also checked against public format documentation and the GPL-2.0 `mborgerson/fatx` implementation. No source from that project is included in FATX Bridge.
+
+- Original Xbox hard-drive layout: https://xboxdevwiki.net/Hard_Drive
+- Original Xbox memory units: https://xboxdevwiki.net/Xbox_Memory_Unit
+- XBPartitioner table structure: https://xboxdevwiki.net/Xbox_Linux_Issues
+- `mborgerson/fatx`: https://github.com/mborgerson/fatx

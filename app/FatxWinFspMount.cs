@@ -47,11 +47,12 @@ public sealed class FatxWinFspMount : IFatxMountSession
         FileSystemHost? host = null;
         try
         {
-            var volume = FatxVolume.Open(stream, partition.Offset, partition.Length, capacity);
+            var volume = FatxVolume.Open(stream, partition.Offset, partition.Length, capacity,
+                partition.Metadata.SectorSize);
             var provider = new FatxWinFspFileSystem(volume, readOnly);
             host = new FileSystemHost(provider)
             {
-                SectorSize = 512,
+                SectorSize = checked((ushort)volume.Metadata.SectorSize),
                 SectorsPerAllocationUnit = checked((ushort)volume.Metadata.SectorsPerCluster),
                 MaxComponentLength = 42,
                 VolumeSerialNumber = volume.Metadata.SerialNumber,
@@ -450,9 +451,9 @@ public sealed class FatxWinFspFileSystem(FatxVolume volume, bool readOnly) : Fil
         FileAttributes = n.IsDirectory ? DirectoryAttribute : 0x80,
         FileSize = n.IsDirectory ? 0U : checked((ulong)n.EffectiveFileSize),
         AllocationSize = n.IsDirectory ? 0U : (ulong)((n.EffectiveFileSize + n.Volume.ClusterSize - 1) / n.Volume.ClusterSize * n.Volume.ClusterSize),
-        CreationTime = ToFileTime(n.Entry.CreationTimestamp), LastWriteTime = ToFileTime(n.Entry.LastWriteTimestamp), LastAccessTime = ToFileTime(n.Entry.LastAccessTimestamp), ChangeTime = ToFileTime(n.Entry.LastWriteTimestamp),
+        CreationTime = ToFileTime(n.Entry.CreationTimestamp, n.Volume.Metadata.ByteOrder), LastWriteTime = ToFileTime(n.Entry.LastWriteTimestamp, n.Volume.Metadata.ByteOrder), LastAccessTime = ToFileTime(n.Entry.LastAccessTimestamp, n.Volume.Metadata.ByteOrder), ChangeTime = ToFileTime(n.Entry.LastWriteTimestamp, n.Volume.Metadata.ByteOrder),
     };
-    private static ulong ToFileTime(uint timestamp) => FatxVolume.DecodeTimestamp(timestamp) is DateTimeOffset time
+    private static ulong ToFileTime(uint timestamp, FatxByteOrder byteOrder) => FatxVolume.DecodeTimestamp(timestamp, byteOrder) is DateTimeOffset time
         ? unchecked((ulong)time.UtcDateTime.ToFileTimeUtc()) : 0;
     private static string ToFatxPath(string value) => string.IsNullOrEmpty(value) || value == "\\" ? "/" : "/" + value.Trim('\\').Replace('\\', '/');
     private static int Status(Exception e) => e switch { UnauthorizedAccessException => AccessDenied, System.IO.FileNotFoundException or System.IO.DirectoryNotFoundException => NotFound, ArgumentException or ArgumentOutOfRangeException => InvalidParameter, IOException x when x.Message.Contains("already exists", StringComparison.OrdinalIgnoreCase) => Exists, IOException x when x.Message.Contains("full", StringComparison.OrdinalIgnoreCase) => DiskFull, IOException x when x.Message.Contains("non-empty", StringComparison.OrdinalIgnoreCase) => DirectoryNotEmpty, IOException x when x.Message.Contains("not a directory", StringComparison.OrdinalIgnoreCase) => NotDirectory, _ => AccessDenied };

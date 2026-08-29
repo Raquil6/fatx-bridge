@@ -86,8 +86,9 @@ public partial class App : Application
         Directory.CreateDirectory(Path.GetDirectoryName(logPath)!);
         try
         {
-            const long length = 16L * 1024 * 1024;
-            const int headerSize = 0x1000, clusterSize = 1024;
+            const long length = 8L * 1024 * 1024;
+            const int headerSize = 0x1000, sectorSize = 4096, sectorsPerCluster = 4;
+            const int clusterSize = sectorSize * sectorsPerCluster;
             long mapEntries = length / clusterSize + 1;
             long dataOffset = headerSize + ((mapEntries * 2 + headerSize - 1) / headerSize * headerSize);
             await using (var image = new FileStream(imagePath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.ReadWrite))
@@ -96,7 +97,7 @@ public partial class App : Application
                 byte[] header = new byte[headerSize];
                 "FATX"u8.CopyTo(header);
                 BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(4), 0x53494445);
-                BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(8), 2);
+                BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(8), sectorsPerCluster);
                 BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(12), 1);
                 await image.WriteAsync(header);
                 image.Position = headerSize;
@@ -110,15 +111,22 @@ public partial class App : Application
                 entry[0] = 9;
                 "hello.txt"u8.CopyTo(entry.AsSpan(2));
                 BinaryPrimitives.WriteUInt32LittleEndian(entry.AsSpan(0x2C), 2);
-                BinaryPrimitives.WriteUInt32LittleEndian(entry.AsSpan(0x30), 19);
+                byte[] greeting = "FATX Bridge works!"u8.ToArray();
+                BinaryPrimitives.WriteUInt32LittleEndian(entry.AsSpan(0x30), checked((uint)greeting.Length));
                 await image.WriteAsync(entry);
                 image.Position = dataOffset + clusterSize;
-                await image.WriteAsync("FATX Bridge works!"u8.ToArray());
+                await image.WriteAsync(greeting);
             }
 
-            FatxVolumeMetadata metadata;
-            using (var image = File.OpenRead(imagePath)) metadata = FatxVolume.Open(image, 0, length, length).Metadata;
-            var partition = new FatxPartitionCandidate("Synthetic", 0, length, metadata);
+            FatxPartitionCandidate partition;
+            using (var image = File.OpenRead(imagePath))
+            {
+                FatxStorageDetection detection = FatxPartitionProbe.DetectSupportedStorage(image, length)
+                    ?? throw new IOException("The synthetic original Xbox memory unit was not detected.");
+                if (detection.Kind != FatxStorageKind.OriginalXboxMemoryUnit)
+                    throw new IOException($"The synthetic memory unit was misclassified as {detection.Kind}.");
+                partition = detection.Partitions.Single();
+            }
             string mountPath;
             string[] entries;
             string content;
@@ -159,7 +167,7 @@ public partial class App : Application
             string persisted;
             using (var image = File.OpenRead(imagePath))
             {
-                FatxVolume volume = FatxVolume.Open(image, 0, length, length);
+                FatxVolume volume = FatxVolume.Open(image, 0, length, length, partition.Metadata.SectorSize);
                 int persistedLength = checked((int)volume.GetEntry("/copied.txt").Entry.FileSize);
                 persisted = System.Text.Encoding.UTF8.GetString(volume.ReadFile("/copied.txt", 0, persistedLength));
                 FatxDirectoryEntry deferredEntry = volume.GetEntry("/deferred.bin").Entry;
@@ -170,7 +178,7 @@ public partial class App : Application
                     throw new IOException("Shrinking a deferred file length did not persist the requested size.");
             }
             await File.WriteAllTextAsync(logPath,
-                $"PASS {DateTimeOffset.Now:O}{Environment.NewLine}Mount: {mountPath}{Environment.NewLine}Entries: {string.Join(", ", entries.Select(Path.GetFileName))}{Environment.NewLine}Read: {content}{Environment.NewLine}Persisted write: {persisted}{Environment.NewLine}Deferred EOF zero-fill: {deferredLengthReadWasZero}, persisted and finalized{Environment.NewLine}Deferred EOF shrink: persisted{Environment.NewLine}Mounted file/directory delete: {mountedDeletePassed}");
+                $"PASS {DateTimeOffset.Now:O}{Environment.NewLine}Layout: original Xbox MU, {partition.Metadata.SectorSize}-byte sectors{Environment.NewLine}Mount: {mountPath}{Environment.NewLine}Entries: {string.Join(", ", entries.Select(Path.GetFileName))}{Environment.NewLine}Read: {content}{Environment.NewLine}Persisted write: {persisted}{Environment.NewLine}Deferred EOF zero-fill: {deferredLengthReadWasZero}, persisted and finalized{Environment.NewLine}Deferred EOF shrink: persisted{Environment.NewLine}Mounted file/directory delete: {mountedDeletePassed}");
         }
         catch (Exception exception) { await File.WriteAllTextAsync(logPath, $"FAIL {DateTimeOffset.Now:O}{Environment.NewLine}{exception}"); }
         finally

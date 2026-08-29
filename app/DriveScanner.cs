@@ -50,17 +50,24 @@ public static class DriveScanner
                 stage = "querying its capacity";
                 long capacity = GetPhysicalDriveLength(stream, log.Write);
                 log.Write($"{path}: capacity is {capacity} bytes (0x{capacity:X}).");
-                stage = "validating its Xbox 360 FATX partitions";
-                IReadOnlyList<FatxPartitionCandidate> partitions = FatxPartitionProbe.DetectStandardRetailPartitions(
+                stage = "validating its Xbox FATX layout";
+                FatxStorageDetection? detection = FatxPartitionProbe.DetectSupportedStorage(
                     stream, capacity, message => log.Write($"{path}: {message}"));
-                if (partitions.Count > 0)
+                if (detection is not null)
                 {
-                    log.Write($"{path}: detected {partitions.Count} validated retail FATX partition(s).");
-                    drives.Add(new DriveScanItem($"Xbox storage on PhysicalDrive{number}", path, capacity, partitions));
+                    string storageName = detection.Kind switch
+                    {
+                        FatxStorageKind.Xbox360HardDrive => "Xbox 360 storage",
+                        FatxStorageKind.OriginalXboxHardDrive => "Original Xbox HDD",
+                        FatxStorageKind.OriginalXboxMemoryUnit => "Original Xbox memory unit",
+                        _ => "Xbox storage",
+                    };
+                    log.Write($"{path}: detected {detection.Kind} with {detection.Partitions.Count} validated FATX partition(s).");
+                    drives.Add(new DriveScanItem($"{storageName} on PhysicalDrive{number}", path, capacity, detection.Partitions));
                 }
                 else
                 {
-                    log.Write($"{path}: no validated retail FATX partitions.");
+                    log.Write($"{path}: no supported validated FATX layout. An original Xbox HDD must be ATA-unlocked before Windows can read it.");
                 }
             }
             catch (UnauthorizedAccessException)
