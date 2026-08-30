@@ -2,13 +2,76 @@
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
   <Application.Resources>
-    <SolidColorBrush x:Key="Panel" Color="#171B22" />
-    <SolidColorBrush x:Key="Accent" Color="#64D5A4" />
+    <Color x:Key="XboxGreenColor">#75B82A</Color>
+    <SolidColorBrush x:Key="XboxGreen" Color="{StaticResource XboxGreenColor}"/>
+    <SolidColorBrush x:Key="XboxGreenDark" Color="#416C17"/>
+    <SolidColorBrush x:Key="BladeOrange" Color="#E58A25"/>
+    <SolidColorBrush x:Key="BladeBlue" Color="#2C84B7"/>
+    <SolidColorBrush x:Key="BladePurple" Color="#77528F"/>
+    <SolidColorBrush x:Key="BladeChrome" Color="#E9EAEB"/>
+    <SolidColorBrush x:Key="BladePaper" Color="#F8F8F8"/>
+    <SolidColorBrush x:Key="Ink" Color="#222529"/>
+    <SolidColorBrush x:Key="MutedInk" Color="#667078"/>
+    <SolidColorBrush x:Key="Line" Color="#C8CCCF"/>
+
     <Style TargetType="Button">
-      <Setter Property="Margin" Value="0,0,8,0" />
-      <Setter Property="Padding" Value="14,7" />
-      <Setter Property="Foreground" Value="#EEF4F0" />
-      <Setter Property="Background" Value="#284438" />
+      <Setter Property="FontFamily" Value="Segoe UI"/>
+      <Setter Property="FontSize" Value="13"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+      <Setter Property="Padding" Value="14,8"/>
+      <Setter Property="Margin" Value="0,0,8,0"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Foreground" Value="{StaticResource Ink}"/>
+      <Setter Property="Background" Value="White"/>
+      <Setter Property="BorderBrush" Value="{StaticResource Line}"/>
+      <Setter Property="BorderThickness" Value="1"/>
+    </Style>
+
+    <Style x:Key="BladeTabButton" TargetType="Button">
+      <Setter Property="Foreground" Value="White"/>
+      <Setter Property="FontSize" Value="15"/>
+      <Setter Property="FontWeight" Value="Bold"/>
+      <Setter Property="Padding" Value="24,13"/>
+      <Setter Property="Margin" Value="0"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="HorizontalContentAlignment" Value="Left"/>
+    </Style>
+
+    <Style x:Key="PrimaryActionButton" TargetType="Button">
+      <Setter Property="Foreground" Value="White"/>
+      <Setter Property="Background" Value="{StaticResource XboxGreenDark}"/>
+      <Setter Property="BorderBrush" Value="{StaticResource XboxGreenDark}"/>
+    </Style>
+
+    <Style x:Key="DangerActionButton" TargetType="Button">
+      <Setter Property="Foreground" Value="White"/>
+      <Setter Property="Background" Value="#A43B2E"/>
+      <Setter Property="BorderBrush" Value="#843025"/>
+    </Style>
+
+    <Style x:Key="ToolCard" TargetType="Border">
+      <Setter Property="Background" Value="White"/>
+      <Setter Property="BorderBrush" Value="{StaticResource Line}"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="CornerRadius" Value="4"/>
+      <Setter Property="Padding" Value="18"/>
+      <Setter Property="Margin" Value="0,0,14,14"/>
+    </Style>
+
+    <Style TargetType="ListBoxItem">
+      <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+      <Setter Property="Padding" Value="0"/>
+      <Setter Property="Margin" Value="0,0,0,8"/>
+      <Setter Property="Background" Value="White"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Style.Triggers>
+        <Trigger Property="IsSelected" Value="True">
+          <Setter Property="Background" Value="#E4F0D7"/>
+        </Trigger>
+        <Trigger Property="IsMouseOver" Value="True">
+          <Setter Property="Background" Value="#EEF3E9"/>
+        </Trigger>
+      </Style.Triggers>
     </Style>
   </Application.Resources>
 </Application>

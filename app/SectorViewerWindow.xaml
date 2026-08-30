@@ -1,0 +1,80 @@
+<Window x:Class="FatxBridge.Windows.SectorViewerWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Read-only sector viewer" Height="760" Width="1080"
+        MinHeight="560" MinWidth="820" WindowStartupLocation="CenterOwner"
+        Background="#0E1116" Foreground="#EEF4F0">
+  <Grid Margin="24">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="*"/>
+      <RowDefinition Height="Auto"/>
+    </Grid.RowDefinitions>
+
+    <TextBlock Text="READ-ONLY SECTOR / CLUSTER VIEWER" FontSize="20" FontWeight="SemiBold"/>
+    <TextBlock Grid.Row="1" x:Name="ReadOnlyBannerText" Margin="0,8,0,0"
+               Text="READ-ONLY • This window never opens a drive or writes to the inspection source."
+               TextWrapping="Wrap" Foreground="#8FE3B0"/>
+
+    <Grid Grid.Row="2" Margin="0,18,0,0">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="Auto"/>
+        <ColumnDefinition Width="150"/>
+        <ColumnDefinition Width="Auto"/>
+        <ColumnDefinition Width="120"/>
+        <ColumnDefinition Width="Auto"/>
+        <ColumnDefinition Width="130"/>
+        <ColumnDefinition Width="Auto"/>
+        <ColumnDefinition Width="120"/>
+        <ColumnDefinition Width="Auto"/>
+        <ColumnDefinition Width="*"/>
+      </Grid.ColumnDefinitions>
+      <Grid.RowDefinitions>
+        <RowDefinition Height="Auto"/>
+        <RowDefinition Height="Auto"/>
+      </Grid.RowDefinitions>
+
+      <TextBlock Text="Absolute byte offset" VerticalAlignment="Center" Margin="0,0,8,0"/>
+      <TextBox Grid.Column="1" x:Name="OffsetTextBox" Text="0" Margin="0,0,16,0"
+               Padding="6" Background="#202631" Foreground="#EEF4F0" BorderBrush="#596760"/>
+      <TextBlock Grid.Column="2" Text="Byte count" VerticalAlignment="Center" Margin="0,0,8,0"/>
+      <TextBox Grid.Column="3" x:Name="CountTextBox" Text="256" Margin="0,0,16,0"
+               Padding="6" Background="#202631" Foreground="#EEF4F0" BorderBrush="#596760"/>
+      <Button Grid.Column="4" x:Name="ReadOffsetButton" Content="Read offset" Click="ReadOffset_Click" Padding="12,6"/>
+
+      <TextBlock Grid.Row="1" Text="Logical sector number" VerticalAlignment="Center" Margin="0,12,8,0"/>
+      <TextBox Grid.Row="1" Grid.Column="1" x:Name="SectorNumberTextBox" Text="0" Margin="0,12,16,0"
+               Padding="6" Background="#202631" Foreground="#EEF4F0" BorderBrush="#596760"/>
+      <TextBlock Grid.Row="1" Grid.Column="2" Text="Sector count" VerticalAlignment="Center" Margin="0,12,8,0"/>
+      <TextBox Grid.Row="1" Grid.Column="3" x:Name="SectorCountTextBox" Text="1" Margin="0,12,16,0"
+               Padding="6" Background="#202631" Foreground="#EEF4F0" BorderBrush="#596760"/>
+      <Button Grid.Row="1" Grid.Column="4" x:Name="ReadSectorButton" Content="Read sectors" Click="ReadSector_Click" Margin="0,12,0,0" Padding="12,6"/>
+
+      <TextBlock Grid.Column="5" Text="FATX cluster number" VerticalAlignment="Center" Margin="22,0,8,0"/>
+      <TextBox Grid.Column="6" x:Name="ClusterNumberTextBox" Text="1" Margin="0,0,16,0"
+               Padding="6" Background="#202631" Foreground="#EEF4F0" BorderBrush="#596760"/>
+      <Button Grid.Column="7" x:Name="ReadClusterButton" Content="Read cluster" Click="ReadCluster_Click" Padding="12,6"/>
+      <TextBlock Grid.Column="8" Grid.ColumnSpan="2" x:Name="ClusterAvailabilityText" Margin="22,0,0,0"
+                 VerticalAlignment="Center" Foreground="#9AA7A1" TextWrapping="Wrap"/>
+    </Grid>
+
+    <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,16,0,12">
+      <Button x:Name="PreviousButton" Content="Previous" Click="Previous_Click" Padding="12,6"/>
+      <Button x:Name="NextButton" Content="Next" Click="Next_Click" Padding="12,6"/>
+      <Button x:Name="RefreshButton" Content="Refresh" Click="Refresh_Click" Padding="12,6"/>
+      <Button x:Name="ExportButton" Content="Export current bytes..." Click="Export_Click" Padding="12,6"/>
+    </StackPanel>
+
+    <GroupBox Grid.Row="4" Header="Hex dump (absolute addresses; ASCII column at right)" Foreground="#EEF4F0" BorderBrush="#596760">
+      <TextBox x:Name="DumpTextBox" IsReadOnly="True" AcceptsReturn="True" TextWrapping="NoWrap"
+               FontFamily="Consolas" FontSize="13" Padding="10" Background="#151A21" Foreground="#DCE8E0"
+               BorderThickness="0" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
+               IsTabStop="False"/>
+    </GroupBox>
+
+    <TextBlock Grid.Row="5" x:Name="StatusText" Margin="0,12,0,0" TextWrapping="Wrap" Foreground="#B5C4BD"/>
+  </Grid>
+</Window>

@@ -6,10 +6,44 @@ using FatxBridge.Core;
 
 namespace FatxBridge.Windows;
 
-public sealed record DriveScanItem(string DisplayName, string Path, long Capacity, IReadOnlyList<FatxPartitionCandidate> Partitions)
+public enum DriveSourceKind
 {
-    public string Details => $"{FormatCapacity(Capacity)}  •  {Path}  •  {Partitions.Count} validated FATX partition(s)";
-    private static string FormatCapacity(long bytes) => $"{bytes / 1024d / 1024d / 1024d:0.##} GB";
+    PhysicalDevice,
+    ImageFile,
+    Xbox360UsbContainer,
+}
+
+public sealed record DriveScanItem(
+    string DisplayName,
+    string Path,
+    long Capacity,
+    IReadOnlyList<FatxPartitionCandidate> Partitions,
+    DriveSourceKind SourceKind = DriveSourceKind.PhysicalDevice,
+    bool SourceSupportsWrite = true,
+    DeviceInformation? DeviceInformation = null,
+    FatxStorageKind? StorageKind = null)
+{
+    public bool IsImageFile => SourceKind == DriveSourceKind.ImageFile;
+    public bool IsPhysicalDevice => SourceKind == DriveSourceKind.PhysicalDevice;
+    public bool IsUsbContainer => SourceKind == DriveSourceKind.Xbox360UsbContainer;
+    public string Details
+    {
+        get
+        {
+            string source = SourceKind switch
+            {
+                DriveSourceKind.ImageFile => "image",
+                DriveSourceKind.Xbox360UsbContainer => "Xbox 360 Data0000 container (read-only)",
+                _ => "physical device",
+            };
+            string details = $"{FormatCapacity(Capacity)}  •  {source}  •  {Path}  •  {Partitions.Count} validated FATX partition(s)";
+            string hardware = IsPhysicalDevice ? DeviceInformation?.DisplaySummary ?? string.Empty : string.Empty;
+            return hardware.Length == 0 ? details : $"{details}  •  {hardware}";
+        }
+    }
+    private static string FormatCapacity(long bytes) => bytes >= 1024L * 1024 * 1024
+        ? $"{bytes / 1024d / 1024d / 1024d:0.##} GiB"
+        : $"{bytes / 1024d / 1024d:0.##} MiB";
 }
 
 public sealed record DriveScanResult(IReadOnlyList<DriveScanItem> Drives, IReadOnlyList<string> Diagnostics);
@@ -33,7 +67,7 @@ public static class DriveScanner
     public static DriveScanResult Scan()
     {
         using ScanLog log = ScanLog.Create(LogPath);
-        log.Write($"FATX Bridge 0.2.0 Beta scan started at {DateTimeOffset.Now:O}.");
+        log.Write($"FATX Bridge scan started at {DateTimeOffset.Now:O}.");
         log.Write($"Process: {Environment.ProcessPath}");
         log.Write($"64-bit process: {Environment.Is64BitProcess}; OS: {Environment.OSVersion}");
         var drives = new List<DriveScanItem>();
@@ -63,7 +97,10 @@ public static class DriveScanner
                         _ => "Xbox storage",
                     };
                     log.Write($"{path}: detected {detection.Kind} with {detection.Partitions.Count} validated FATX partition(s).");
-                    drives.Add(new DriveScanItem($"{storageName} on PhysicalDrive{number}", path, capacity, detection.Partitions));
+                    DeviceInformation deviceInformation = DeviceInformationReader.Read(
+                        stream.SafeFileHandle, message => log.Write($"{path}: {message}"));
+                    drives.Add(new DriveScanItem($"{storageName} on PhysicalDrive{number}", path, capacity,
+                        detection.Partitions, DeviceInformation: deviceInformation, StorageKind: detection.Kind));
                 }
                 else
                 {

@@ -128,13 +128,18 @@ public partial class App : Application
                 partition = detection.Partitions.Single();
             }
             string mountPath;
+            string mountedLabel;
             string[] entries;
             string content;
             bool deferredLengthReadWasZero;
             bool mountedDeletePassed;
-            using (var mount = await FatxMountBroker.MountAsync(imagePath, length, partition, readOnly: false))
+            using (var mount = await FatxMountBroker.MountAsync(imagePath, length, partition, readOnly: false,
+                volumeLabel: "FATX Bridge Probe"))
             {
                 mountPath = mount.MountPath;
+                mountedLabel = new DriveInfo(mount.MountPath).VolumeLabel;
+                if (!string.Equals(mountedLabel, "FATX Bridge Probe", StringComparison.Ordinal))
+                    throw new IOException($"The mounted Explorer label was '{mountedLabel}'.");
                 entries = Directory.GetFileSystemEntries(mount.MountPath);
                 content = await File.ReadAllTextAsync(Path.Combine(mount.MountPath, "hello.txt"));
                 await File.WriteAllTextAsync(Path.Combine(mount.MountPath, "copied.txt"), "Written through Windows Explorer");
@@ -178,7 +183,7 @@ public partial class App : Application
                     throw new IOException("Shrinking a deferred file length did not persist the requested size.");
             }
             await File.WriteAllTextAsync(logPath,
-                $"PASS {DateTimeOffset.Now:O}{Environment.NewLine}Layout: original Xbox MU, {partition.Metadata.SectorSize}-byte sectors{Environment.NewLine}Mount: {mountPath}{Environment.NewLine}Entries: {string.Join(", ", entries.Select(Path.GetFileName))}{Environment.NewLine}Read: {content}{Environment.NewLine}Persisted write: {persisted}{Environment.NewLine}Deferred EOF zero-fill: {deferredLengthReadWasZero}, persisted and finalized{Environment.NewLine}Deferred EOF shrink: persisted{Environment.NewLine}Mounted file/directory delete: {mountedDeletePassed}");
+                $"PASS {DateTimeOffset.Now:O}{Environment.NewLine}Layout: original Xbox MU, {partition.Metadata.SectorSize}-byte sectors{Environment.NewLine}Mount: {mountPath}{Environment.NewLine}Label: {mountedLabel}{Environment.NewLine}Entries: {string.Join(", ", entries.Select(Path.GetFileName))}{Environment.NewLine}Read: {content}{Environment.NewLine}Persisted write: {persisted}{Environment.NewLine}Deferred EOF zero-fill: {deferredLengthReadWasZero}, persisted and finalized{Environment.NewLine}Deferred EOF shrink: persisted{Environment.NewLine}Mounted file/directory delete: {mountedDeletePassed}");
         }
         catch (Exception exception) { await File.WriteAllTextAsync(logPath, $"FAIL {DateTimeOffset.Now:O}{Environment.NewLine}{exception}"); }
         finally

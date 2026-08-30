@@ -42,21 +42,21 @@ public sealed class FatxWinFspMount : IFatxMountSession
     }
 
     internal static FatxWinFspMount MountOpened(FileStream stream, long capacity, FatxPartitionCandidate partition,
-        bool readOnly, bool useDriveLetter)
+        bool readOnly, bool useDriveLetter, string? volumeLabel = null)
     {
         FileSystemHost? host = null;
         try
         {
             var volume = FatxVolume.Open(stream, partition.Offset, partition.Length, capacity,
                 partition.Metadata.SectorSize);
-            var provider = new FatxWinFspFileSystem(volume, readOnly);
+            var provider = new FatxWinFspFileSystem(volume, readOnly, VolumeLabelStore.Normalize(volumeLabel ?? $"FATX {partition.Name}"));
             host = new FileSystemHost(provider)
             {
                 SectorSize = checked((ushort)volume.Metadata.SectorSize),
                 SectorsPerAllocationUnit = checked((ushort)volume.Metadata.SectorsPerCluster),
                 MaxComponentLength = 42,
                 VolumeSerialNumber = volume.Metadata.SerialNumber,
-                FileSystemName = "FATX",
+                FileSystemName = volume.Metadata.AllocationTable == FatxAllocationTable.Fat16 ? "FATX16" : "FATX32",
                 CaseSensitiveSearch = false,
                 CasePreservedNames = true,
                 UnicodeOnDisk = false,
@@ -120,10 +120,21 @@ public sealed class FatxWinFspMount : IFatxMountSession
 
 /// <summary>WinFsp callbacks over the FATX core. The core serializes all metadata mutations.</summary>
 #pragma warning disable CA1725 // WinFsp dispatches callback arguments by its documented signature and parameter names are not semantic.
-public sealed class FatxWinFspFileSystem(FatxVolume volume, bool readOnly) : FileSystemBase
+public sealed class FatxWinFspFileSystem(FatxVolume volume, bool readOnly, string initialVolumeLabel) : FileSystemBase
 {
     private const int Success = 0, NotFound = unchecked((int)0xC0000034), Exists = unchecked((int)0xC0000035), AccessDenied = unchecked((int)0xC0000022), InvalidParameter = unchecked((int)0xC000000D), NotDirectory = unchecked((int)0xC0000103), DirectoryNotEmpty = unchecked((int)0xC0000101), DiskFull = unchecked((int)0xC000007F), WriteProtected = unchecked((int)0xC00000A2);
-    private const uint DirectoryAttribute = 0x10;
+    private const byte FatxReadOnlyAttribute = 0x01;
+    private const byte FatxHiddenAttribute = 0x02;
+    private const byte FatxSystemAttribute = 0x04;
+    private const byte FatxDirectoryAttribute = 0x10;
+    private const byte FatxArchiveAttribute = 0x20;
+    private const uint WindowsReadOnlyAttribute = 0x01;
+    private const uint WindowsHiddenAttribute = 0x02;
+    private const uint WindowsSystemAttribute = 0x04;
+    private const uint WindowsDirectoryAttribute = 0x10;
+    private const uint WindowsArchiveAttribute = 0x20;
+    private const uint WindowsNormalAttribute = 0x80;
+    private string volumeLabel = initialVolumeLabel;
 
     public override int Init(object hostObject)
     {
@@ -149,8 +160,7 @@ public sealed class FatxWinFspFileSystem(FatxVolume volume, bool readOnly) : Fil
         try
         {
             Node node = Node.From(volume, ToFatxPath(fileName));
-            fileAttributes = node.IsDirectory ? DirectoryAttribute : 0x80;
-            if (readOnly) fileAttributes |= 0x1;
+            fileAttributes = MapFatxAttributes(node.Entry.Attributes, readOnly);
             return Success;
         }
         catch (Exception exception)
@@ -166,7 +176,21 @@ public sealed class FatxWinFspFileSystem(FatxVolume volume, bool readOnly) : Fil
         // a whole physical FATX allocation table here: on a USB HDD adapter that can
         // block the dispatcher long enough for Explorer to reject the drive.
         volumeInfo = new VolumeInfo { TotalSize = (ulong)volume.TotalSize, FreeSize = (ulong)volume.ReportedFreeSpace };
+        volumeInfo.SetVolumeLabel(volumeLabel);
         return Success;
+    }
+    public override int SetVolumeLabel(string VolumeLabel, out VolumeInfo volumeInfo)
+    {
+        try
+        {
+            volumeLabel = VolumeLabelStore.Normalize(VolumeLabel);
+            return GetVolumeInfo(out volumeInfo);
+        }
+        catch
+        {
+            volumeInfo = default;
+            return InvalidParameter;
+        }
     }
     public override int Open(string fileName, uint createOptions, uint grantedAccess, out object fileNode, out object fileDesc, out FileInfo fileInfo, out string normalizedName)
     {
@@ -180,7 +204,7 @@ public sealed class FatxWinFspFileSystem(FatxVolume volume, bool readOnly) : Fil
         if (readOnly) { fileNode = fileDesc = null!; fileInfo = default; normalizedName = null!; return WriteProtected; }
         try
         {
-            string path = ToFatxPath(fileName); bool directory = (fileAttributes & DirectoryAttribute) != 0;
+            string path = ToFatxPath(fileName); bool directory = (fileAttributes & WindowsDirectoryAttribute) != 0;
             if (directory) volume.CreateDirectory(path); else { volume.CreateFile(path); if (allocationSize > 0) volume.Preallocate(path, checked((long)allocationSize)); }
             var node = Node.From(volume, path); fileNode = node; fileDesc = node.IsDirectory ? new Cursor(node) : node; fileInfo = Info(node); normalizedName = fileName; return Success;
         }
@@ -446,13 +470,26 @@ public sealed class FatxWinFspFileSystem(FatxVolume volume, bool readOnly) : Fil
         }
         catch { }
     }
-    private static FileInfo Info(Node n) => new()
+    private FileInfo Info(Node n) => new()
     {
-        FileAttributes = n.IsDirectory ? DirectoryAttribute : 0x80,
+        FileAttributes = MapFatxAttributes(n.Entry.Attributes, readOnly),
         FileSize = n.IsDirectory ? 0U : checked((ulong)n.EffectiveFileSize),
         AllocationSize = n.IsDirectory ? 0U : (ulong)((n.EffectiveFileSize + n.Volume.ClusterSize - 1) / n.Volume.ClusterSize * n.Volume.ClusterSize),
         CreationTime = ToFileTime(n.Entry.CreationTimestamp, n.Volume.Metadata.ByteOrder), LastWriteTime = ToFileTime(n.Entry.LastWriteTimestamp, n.Volume.Metadata.ByteOrder), LastAccessTime = ToFileTime(n.Entry.LastAccessTimestamp, n.Volume.Metadata.ByteOrder), ChangeTime = ToFileTime(n.Entry.LastWriteTimestamp, n.Volume.Metadata.ByteOrder),
     };
+    internal static uint MapFatxAttributes(byte fatxAttributes, bool mountReadOnly)
+    {
+        uint windowsAttributes = 0;
+        if ((fatxAttributes & FatxReadOnlyAttribute) != 0) windowsAttributes |= WindowsReadOnlyAttribute;
+        if ((fatxAttributes & FatxHiddenAttribute) != 0) windowsAttributes |= WindowsHiddenAttribute;
+        if ((fatxAttributes & FatxSystemAttribute) != 0) windowsAttributes |= WindowsSystemAttribute;
+        bool directory = (fatxAttributes & FatxDirectoryAttribute) != 0;
+        if (directory) windowsAttributes |= WindowsDirectoryAttribute;
+        if ((fatxAttributes & FatxArchiveAttribute) != 0) windowsAttributes |= WindowsArchiveAttribute;
+        if (mountReadOnly) windowsAttributes |= WindowsReadOnlyAttribute;
+        if (!directory && windowsAttributes == 0) windowsAttributes = WindowsNormalAttribute;
+        return windowsAttributes;
+    }
     private static ulong ToFileTime(uint timestamp, FatxByteOrder byteOrder) => FatxVolume.DecodeTimestamp(timestamp, byteOrder) is DateTimeOffset time
         ? unchecked((ulong)time.UtcDateTime.ToFileTimeUtc()) : 0;
     private static string ToFatxPath(string value) => string.IsNullOrEmpty(value) || value == "\\" ? "/" : "/" + value.Trim('\\').Replace('\\', '/');

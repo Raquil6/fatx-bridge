@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.3.0 Beta 1 — 2026-08-30
+
+- Rebuilt the desktop interface as Xbox 360 dashboard-inspired tabs—Storage, Browse, Tools, and About—so uncommon and destructive operations are no longer exposed on startup.
+- Added contextual Browse-tab animation, keyboard tab navigation, distinct navigation/button sounds, and a persistent sound toggle.
+- Added opening and mounting complete FATX disk images and standalone FATX partition images.
+- Added cancellable full-physical-device backups written through a temporary file and verified with SHA-256 before publication.
+- Added exact-capacity full-device restore with typed target confirmation and complete post-write SHA-256 verification.
+- Added locally remembered, user-defined Explorer volume labels and FATX16/FATX32 mount names.
+- Imaging copies every byte exactly and never requires an Xbox 360 security sector, preserving compatibility with BadStorage-style disks.
+- Added best-effort device/bus/sector/health details without displaying device serial numbers.
+- Added automatic local backup of structurally validated Xbox 360 security-sector payloads; missing security sectors remain supported.
+- Added image-only FATX quick/full formatting with crash-safe header publication and reopen validation.
+- Added conservative read-only deleted-file candidate scanning and export with cluster-reuse refusal.
+- Added bounded read-only CON/LIVE/PIRS metadata inspection.
+- Added read-only legacy Xbox 360 `Data0000` segmented-container browsing.
+- Added a 64 KiB-capped read-only sector/cluster viewer with exact-byte export.
+- Added redacted allowlist-only diagnostic support-package export.
+- Added Explorer attribute fidelity for FATX read-only, hidden, system, directory, and archive bits.
+
 ## 0.2.0 Beta 3
 
 - Added detection and mounting for unlocked original Xbox hard drives.

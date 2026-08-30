@@ -2,7 +2,7 @@
 
 ## Recommended installer
 
-1. Download `FATXBridge-0.2.0-beta.3-Setup.exe` from the official [FATX Bridge releases page](https://github.com/Lomzlomz/fatx-bridge/releases/tag/v0.2.0-beta.3).
+1. Download `FATXBridge-0.3.0-beta.1-Setup.exe` from the official [FATX Bridge releases page](https://github.com/Lomzlomz/fatx-bridge/releases/tag/v0.3.0-beta.1).
 2. Run the installer and approve its administrator prompt.
 3. Choose whether to add a desktop shortcut, then select **Install**.
 4. Launch FATX Bridge from the final installer page or search for **FATX Bridge** in the Windows Start menu.
@@ -18,14 +18,14 @@ The beta installer is not code-signed. Windows may display an **Unknown publishe
 You can calculate the checksum in PowerShell:
 
 ```powershell
-Get-FileHash .\FATXBridge-0.2.0-beta.3-Setup.exe -Algorithm SHA256
+Get-FileHash .\FATXBridge-0.3.0-beta.1-Setup.exe -Algorithm SHA256
 ```
 
 ## Portable installation
 
 1. Install the stable [WinFsp 2.1 MSI](https://github.com/winfsp/winfsp/releases/download/v2.1/winfsp-2.1.25156.msi).
 2. Keep the default **Core** feature selected and complete the WinFsp setup.
-3. Download and extract `FATXBridge-0.2.0-beta.3-win-x64-portable.zip`.
+3. Download and extract `FATXBridge-0.3.0-beta.1-win-x64-portable.zip`.
 4. Run `FatxBridge.exe` from the extracted directory.
 
 Do not run FATX Bridge from inside the ZIP preview. Extract the complete package first so its supporting files remain beside the executable.

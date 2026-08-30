@@ -14,6 +14,8 @@ public sealed class FatxFormatException : IOException { public FatxFormatExcepti
 public sealed class FatxVolume
 {
     private const int HeaderSize = 0x1000, RawAlignment = 0x1000, EntrySize = 0x40, MaximumDirectoryEntries = 4096;
+    private const int RecoveryReadChunkSize = 1024 * 1024;
+    private const byte DeletedMarker = 0xE5;
     private static readonly Encoding Ascii = Encoding.ASCII;
     private readonly Stream source;
     private readonly object mutationGate = new();
@@ -91,6 +93,107 @@ public sealed class FatxVolume
 
     public IReadOnlyList<FatxDirectoryEntry> ListRootDirectory() => EnumerateDirectory("/");
     public IReadOnlyList<FatxDirectoryEntry> EnumerateDirectory(string path) { lock (mutationGate) return ReadDirectory(ResolveDirectory(path)).Where(s => !s.Deleted && !s.Empty).Select(s => s.Entry!).ToArray(); }
+
+    /// <summary>
+    /// Enumerates deleted 0xE5 directory slots in the root or a currently live
+    /// directory. Deleted entries are never returned by <see cref="EnumerateDirectory"/>.
+    /// The original name-length byte was overwritten by deletion, so each name
+    /// is explicitly best-effort and may be a stable synthetic label.
+    /// </summary>
+    public IReadOnlyList<FatxDeletedEntryCandidate> EnumerateDeletedEntries(string path = "/")
+    {
+        lock (mutationGate)
+        {
+            EnsureRecoveryReadSafe();
+            long originalPosition = source.Position;
+            try
+            {
+                string directoryPath = CanonicalPath(path);
+                uint directory = ResolveDirectory(directoryPath);
+                return ReadDeletedEntries(directoryPath, directory).ToArray();
+            }
+            finally { RestoreSourcePosition(originalPosition); }
+        }
+    }
+
+    /// <summary>Reads a bounded range from a deleted file's contiguous-unallocated candidate.</summary>
+    public byte[] ReadDeletedFile(FatxDeletedEntryCandidate candidate, long offset, int count)
+    {
+        ArgumentNullException.ThrowIfNull(candidate);
+        ArgumentOutOfRangeException.ThrowIfNegative(offset);
+        ArgumentOutOfRangeException.ThrowIfNegative(count);
+        var result = new byte[count];
+        int read = ReadDeletedFile(candidate, offset, result);
+        return read == count ? result : result[..read];
+    }
+
+    /// <summary>
+    /// Reads a range from a deleted file only when its complete candidate
+    /// contiguous cluster range is currently free. No FATX metadata is written.
+    /// </summary>
+    public int ReadDeletedFile(FatxDeletedEntryCandidate candidate, long offset, Span<byte> target)
+    {
+        ArgumentNullException.ThrowIfNull(candidate);
+        ArgumentOutOfRangeException.ThrowIfNegative(offset);
+        lock (mutationGate)
+        {
+            EnsureRecoveryReadSafe();
+            long originalPosition = source.Position;
+            try
+            {
+                DeletedRecoveryValidation validation = ValidateDeletedCandidate(candidate);
+                if (validation.FileSize == 0) return 0;
+                long available = (long)validation.FileSize - offset;
+                if (available <= 0 || target.IsEmpty) return 0;
+                int read = checked((int)Math.Min((long)target.Length, available));
+                long at = checked(ClusterOffset(validation.FirstCluster) + offset);
+                ReadAt(source, at, target[..read], Metadata.PartitionOffset, Metadata.PartitionLength);
+                return read;
+            }
+            finally { RestoreSourcePosition(originalPosition); }
+        }
+    }
+
+    /// <summary>
+    /// Streams a deleted file's contiguous-unallocated candidate to a caller-owned
+    /// destination. Directories and candidates with any allocated cluster are refused.
+    /// The destination is not flushed by this method.
+    /// </summary>
+    public long ExportDeletedFile(
+        FatxDeletedEntryCandidate candidate,
+        Stream destination,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(candidate);
+        ArgumentNullException.ThrowIfNull(destination);
+        if (!destination.CanWrite) throw new ArgumentException("The recovery destination must be writable.", nameof(destination));
+        if (ReferenceEquals(destination, source))
+            throw new ArgumentException("The recovery destination cannot be the FATX source stream.", nameof(destination));
+
+        lock (mutationGate)
+        {
+            EnsureRecoveryReadSafe();
+            long originalPosition = source.Position;
+            try
+            {
+                DeletedRecoveryValidation validation = ValidateDeletedCandidate(candidate);
+                if (validation.FileSize == 0) return 0;
+                byte[] buffer = new byte[RecoveryReadChunkSize];
+                long offset = 0;
+                while (offset < validation.FileSize)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    int count = checked((int)Math.Min(buffer.Length, validation.FileSize - offset));
+                    long at = checked(ClusterOffset(validation.FirstCluster) + offset);
+                    ReadAt(source, at, buffer.AsSpan(0, count), Metadata.PartitionOffset, Metadata.PartitionLength);
+                    destination.Write(buffer, 0, count);
+                    offset += count;
+                }
+                return offset;
+            }
+            finally { RestoreSourcePosition(originalPosition); }
+        }
+    }
     public FatxPathEntry GetEntry(string path) { lock (mutationGate) { string p = CanonicalPath(path); if (p == "/") throw new ArgumentException("The root has no entry.", nameof(path)); Slot slot = FindEntry(p) ?? throw new FileNotFoundException("The FATX path does not exist.", path); return new FatxPathEntry(p, slot.Entry!); } }
     public bool TryGetEntry(string path, out FatxPathEntry? entry) { try { entry = GetEntry(path); return true; } catch (FileNotFoundException) { entry = null; return false; } }
     public byte[] ReadFile(string path, long offset, int count) { ArgumentOutOfRangeException.ThrowIfNegative(offset); ArgumentOutOfRangeException.ThrowIfNegative(count); var result = new byte[count]; int read = ReadFile(path, offset, result); return read == count ? result : result[..read]; }
@@ -253,6 +356,258 @@ public sealed class FatxVolume
             }
         }
     }
+
+    private IEnumerable<FatxDeletedEntryCandidate> ReadDeletedEntries(string directoryPath, uint directory)
+    {
+        if (!Data(directory)) throw new FatxFormatException("A FATX directory has no valid first cluster.");
+        List<uint> chain = GetChain(directory);
+        int inspected = 0;
+        bool terminal = false;
+        for (int clusterIndex = 0; clusterIndex < chain.Count; clusterIndex++)
+        {
+            uint cluster = chain[clusterIndex];
+            var bytes = new byte[checked((int)ClusterSize)];
+            ReadAt(source, ClusterOffset(cluster), bytes, Metadata.PartitionOffset, Metadata.PartitionLength);
+            for (int offset = 0; offset < bytes.Length; offset += EntrySize)
+            {
+                if (terminal) yield break;
+                byte marker = bytes[offset];
+                if (marker is 0 or 0xFF)
+                {
+                    terminal = true;
+                    yield break;
+                }
+
+                if (++inspected > MaximumDirectoryEntries)
+                    throw new FatxFormatException("The directory exceeds the deleted-entry safety limit.");
+                if (marker == DeletedMarker)
+                {
+                    long slotOffset = checked(ClusterOffset(cluster) + offset);
+                    yield return ParseDeletedEntry(directoryPath, directory, slotOffset,
+                        bytes.AsSpan(offset, EntrySize));
+                    continue;
+                }
+
+                if (marker > 42)
+                    throw new FatxFormatException("A FATX directory entry has an invalid name length.");
+            }
+        }
+    }
+
+    private FatxDeletedEntryCandidate ParseDeletedEntry(
+        string directoryPath,
+        uint directory,
+        long slotOffset,
+        ReadOnlySpan<byte> bytes)
+    {
+        byte attributes = bytes[1];
+        uint firstCluster = U32(bytes.Slice(0x2C, 4), Metadata.ByteOrder);
+        uint fileSize = U32(bytes.Slice(0x30, 4), Metadata.ByteOrder);
+        uint creationTimestamp = U32(bytes.Slice(0x34, 4), Metadata.ByteOrder);
+        uint lastWriteTimestamp = U32(bytes.Slice(0x38, 4), Metadata.ByteOrder);
+        uint lastAccessTimestamp = U32(bytes.Slice(0x3C, 4), Metadata.ByteOrder);
+        DateTimeOffset? creationTime = DecodeTimestamp(creationTimestamp, Metadata.ByteOrder);
+        DateTimeOffset? lastWriteTime = DecodeTimestamp(lastWriteTimestamp, Metadata.ByteOrder);
+        DateTimeOffset? lastAccessTime = DecodeTimestamp(lastAccessTimestamp, Metadata.ByteOrder);
+        (string recoveredName, bool nameWasRecovered) = RecoverDeletedName(
+            bytes.Slice(2, 42), slotOffset);
+
+        FatxDeletedEntryClassification classification;
+        string reason;
+        if ((attributes & ~0x3Fu) != 0)
+        {
+            classification = FatxDeletedEntryClassification.InvalidMetadata;
+            reason = "unsupported-attribute-bits";
+        }
+        else if (IsDirectory(attributes) && firstCluster == 0)
+        {
+            classification = FatxDeletedEntryClassification.InvalidMetadata;
+            reason = "directory-has-no-first-cluster";
+        }
+        else if (firstCluster != 0 && !Data(firstCluster))
+        {
+            classification = FatxDeletedEntryClassification.InvalidMetadata;
+            reason = "first-cluster-out-of-range";
+        }
+        else if (fileSize != 0 && firstCluster == 0)
+        {
+            classification = FatxDeletedEntryClassification.InvalidMetadata;
+            reason = "nonempty-file-has-no-first-cluster";
+        }
+        else if (fileSize != 0 && !ContiguousRangeWithinData(firstCluster, fileSize, out _))
+        {
+            classification = FatxDeletedEntryClassification.InvalidMetadata;
+            reason = "file-range-out-of-partition";
+        }
+        else if (!TimestampsAreUsable(creationTimestamp, creationTime) ||
+                 !TimestampsAreUsable(lastWriteTimestamp, lastWriteTime) ||
+                 !TimestampsAreUsable(lastAccessTimestamp, lastAccessTime))
+        {
+            classification = FatxDeletedEntryClassification.InvalidMetadata;
+            reason = "malformed-timestamp";
+        }
+        else if (IsDirectory(attributes))
+        {
+            classification = FatxDeletedEntryClassification.Uncertain;
+            reason = "directory-extraction-not-supported";
+        }
+        else if (fileSize == 0)
+        {
+            classification = FatxDeletedEntryClassification.ZeroLength;
+            reason = "zero-length-file";
+        }
+        else
+        {
+            (classification, reason) = ClassifyAllocation(firstCluster, fileSize);
+        }
+
+        return new FatxDeletedEntryCandidate(
+            directoryPath,
+            directory,
+            slotOffset,
+            recoveredName,
+            nameWasRecovered,
+            OriginalNameLengthKnown: false,
+            attributes,
+            firstCluster,
+            fileSize,
+            creationTimestamp,
+            lastWriteTimestamp,
+            lastAccessTimestamp,
+            creationTime,
+            lastWriteTime,
+            lastAccessTime,
+            classification,
+            reason);
+    }
+
+    private (FatxDeletedEntryClassification Classification, string Reason) ClassifyAllocation(
+        uint firstCluster,
+        uint fileSize)
+    {
+        if (!ContiguousRangeWithinData(firstCluster, fileSize, out long clusterCount))
+            return (FatxDeletedEntryClassification.InvalidMetadata, "file-range-out-of-partition");
+        try
+        {
+            for (long index = 0; index < clusterCount; index++)
+            {
+                uint cluster = checked((uint)(firstCluster + index));
+                if (ReadFat(cluster) != 0)
+                    return (FatxDeletedEntryClassification.ClustersReusedOrOverwritten,
+                        "candidate-cluster-is-currently-allocated");
+            }
+            return (FatxDeletedEntryClassification.ContiguousUnallocated,
+                "all-candidate-clusters-currently-free-original-chain-erased");
+        }
+        catch (FatxFormatException)
+        {
+            return (FatxDeletedEntryClassification.Uncertain, "allocation-state-unavailable");
+        }
+        catch (IOException)
+        {
+            return (FatxDeletedEntryClassification.Uncertain, "allocation-state-unavailable");
+        }
+    }
+
+    private DeletedRecoveryValidation ValidateDeletedCandidate(FatxDeletedEntryCandidate candidate)
+    {
+        if (candidate.Classification != FatxDeletedEntryClassification.ContiguousUnallocated &&
+            candidate.Classification != FatxDeletedEntryClassification.ZeroLength)
+            throw new FatxRecoveryException("The deleted candidate is not safe to extract: " + candidate.ClassificationReason);
+        if (candidate.IsDirectory)
+            throw new FatxRecoveryException("Deleted directories are listed but are not extracted.");
+        if (!string.Equals(CanonicalPath(candidate.DirectoryPath), candidate.DirectoryPath,
+                StringComparison.Ordinal))
+            throw new FatxRecoveryException("The deleted candidate directory path is not canonical.");
+        if (ResolveDirectory(candidate.DirectoryPath) != candidate.DirectoryFirstCluster)
+            throw new FatxRecoveryException("The deleted candidate's parent directory changed.");
+        if (!SlotBelongsToDirectory(candidate.DirectoryFirstCluster, candidate.SlotOffset))
+            throw new FatxRecoveryException("The deleted candidate slot is outside its parent directory.");
+        if (!Within(candidate.SlotOffset, EntrySize, checked(Metadata.PartitionOffset + Metadata.PartitionLength)))
+            throw new FatxRecoveryException("The deleted candidate slot is outside the partition.");
+
+        var raw = new byte[EntrySize];
+        ReadAt(source, candidate.SlotOffset, raw, Metadata.PartitionOffset, Metadata.PartitionLength);
+        if (raw[0] != DeletedMarker)
+            throw new FatxRecoveryException("The deleted candidate slot is no longer deleted.");
+        byte attributes = raw[1];
+        uint firstCluster = U32(raw.AsSpan(0x2C, 4), Metadata.ByteOrder);
+        uint fileSize = U32(raw.AsSpan(0x30, 4), Metadata.ByteOrder);
+        if (attributes != candidate.Attributes || firstCluster != candidate.FirstCluster || fileSize != candidate.FileSize)
+            throw new FatxRecoveryException("The deleted candidate metadata changed after discovery.");
+        if ((attributes & ~0x3Fu) != 0 || firstCluster != 0 && !Data(firstCluster))
+            throw new FatxRecoveryException("The deleted candidate metadata is outside FATX bounds.");
+        if (fileSize != 0 && (firstCluster == 0 || !ContiguousRangeWithinData(firstCluster, fileSize, out _)))
+            throw new FatxRecoveryException("The deleted candidate data range is outside the partition.");
+        if (fileSize == 0) return new DeletedRecoveryValidation(firstCluster, fileSize);
+
+        // Re-check every cluster at read time. A candidate may have been
+        // invalidated by a later allocation even if its discovery scan was safe.
+        if (!ContiguousRangeWithinData(firstCluster, fileSize, out long clusterCount))
+            throw new FatxRecoveryException("The deleted candidate data range is outside the partition.");
+        for (long index = 0; index < clusterCount; index++)
+        {
+            uint cluster = checked((uint)(firstCluster + index));
+            if (ReadFat(cluster) != 0)
+                throw new FatxRecoveryException("The deleted candidate includes a currently allocated cluster; extraction refused.");
+        }
+        return new DeletedRecoveryValidation(firstCluster, fileSize);
+    }
+
+    private bool SlotBelongsToDirectory(uint directory, long slotOffset)
+    {
+        foreach (uint cluster in GetChain(directory))
+        {
+            long start = ClusterOffset(cluster);
+            long end = checked(start + ClusterSize);
+            if (slotOffset >= start && slotOffset < end && (slotOffset - start) % EntrySize == 0)
+                return true;
+        }
+        return false;
+    }
+
+    private bool ContiguousRangeWithinData(uint firstCluster, uint fileSize, out long clusterCount)
+    {
+        clusterCount = fileSize == 0 ? 0 : checked(((long)fileSize + ClusterSize - 1) / ClusterSize);
+        if (clusterCount == 0) return true;
+        if (!Data(firstCluster)) return false;
+        return (long)firstCluster + clusterCount - 1 <= Metadata.ClusterCount;
+    }
+
+    private static bool IsDirectory(byte attributes) => (attributes & 0x10) != 0;
+
+    private static bool TimestampsAreUsable(uint raw, DateTimeOffset? decoded) => raw == 0 || decoded is not null;
+
+    private static (string Name, bool NameWasRecovered) RecoverDeletedName(ReadOnlySpan<byte> bytes, long slotOffset)
+    {
+        int length = 0;
+        while (length < bytes.Length && bytes[length] is not (0 or 0xFF)) length++;
+        ReadOnlySpan<byte> name = bytes[..length];
+        bool invalid = name.IsEmpty;
+        foreach (byte value in name)
+            if (value < 0x20 || value > 0x7E || value is (byte)'/' or (byte)'\\' or (byte)'"' or
+                (byte)'*' or (byte)':' or (byte)'<' or (byte)'>' or (byte)'?' or (byte)'|')
+                invalid = true;
+        if (invalid)
+            return ($"Deleted_{slotOffset:X16}", false);
+        string result = Ascii.GetString(name);
+        if (string.IsNullOrWhiteSpace(result)) return ($"Deleted_{slotOffset:X16}", false);
+        return (result, true);
+    }
+
+    private void EnsureRecoveryReadSafe()
+    {
+        if (fatPageDirty)
+            throw new FatxRecoveryException("Recovery requires a clean FAT cache and will not flush pending FATX writes.");
+    }
+
+    private void RestoreSourcePosition(long position)
+    {
+        try { source.Position = position; }
+        catch (IOException) { }
+        catch (ArgumentException) { }
+    }
+
     private FatxDirectoryEntry Parse(ReadOnlySpan<byte> b) => new(Ascii.GetString(b.Slice(2, b[0])), b[1], U32(b.Slice(0x2C, 4), Metadata.ByteOrder), U32(b.Slice(0x30, 4), Metadata.ByteOrder), U32(b.Slice(0x34, 4), Metadata.ByteOrder), U32(b.Slice(0x38, 4), Metadata.ByteOrder), U32(b.Slice(0x3C, 4), Metadata.ByteOrder));
     private Slot ReadSlot(long position) { var b = new byte[EntrySize]; ReadAt(source, position, b, Metadata.PartitionOffset, Metadata.PartitionLength); return new Slot(position, b[0] is 0 or 0xFF or 0xE5 ? null : Parse(b), b[0] == 0xE5, b[0] is 0 or 0xFF); }
     private void WriteEntry(long at, FatxDirectoryEntry e) { ValidateName(e.Name); var b = new byte[EntrySize]; b[0] = (byte)e.Name.Length; b[1] = e.Attributes; Ascii.GetBytes(e.Name, b.AsSpan(2)); Put32(b.AsSpan(0x2C), e.FirstCluster); Put32(b.AsSpan(0x30), e.FileSize); Put32(b.AsSpan(0x34), e.CreationTimestamp); Put32(b.AsSpan(0x38), e.LastWriteTimestamp); Put32(b.AsSpan(0x3C), e.LastAccessTimestamp); WriteAt(at, b); }

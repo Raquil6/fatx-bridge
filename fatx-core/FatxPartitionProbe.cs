@@ -8,6 +8,7 @@ public enum FatxStorageKind
     Xbox360HardDrive,
     OriginalXboxHardDrive,
     OriginalXboxMemoryUnit,
+    StandaloneFatxImage,
 }
 
 public sealed record FatxPartitionCandidate(
@@ -88,6 +89,25 @@ public static class FatxPartitionProbe
         }
 
         return null;
+    }
+
+    /// <summary>Detects a complete supported disk image or a standalone 512-byte-sector FATX partition image.</summary>
+    public static FatxStorageDetection? DetectImage(
+        Stream source,
+        long? sourceLength = null,
+        Action<string>? diagnostic = null)
+    {
+        ValidateSource(source);
+        long length = sourceLength ?? source.Length;
+        FatxStorageDetection? completeDisk = DetectSupportedStorage(source, length, diagnostic);
+        if (completeDisk is not null) return completeDisk;
+
+        FatxPartitionCandidate? standalone = ProbeCandidateVolume(source, length,
+            new ProbeCandidate("FATX volume", 0, length, true),
+            requiredByteOrder: null, message => diagnostic?.Invoke($"Standalone image: {message}"));
+        return standalone is null
+            ? null
+            : new FatxStorageDetection(FatxStorageKind.StandaloneFatxImage, [standalone]);
     }
 
     public static IReadOnlyList<FatxPartitionCandidate> DetectStandardRetailPartitions(
@@ -251,7 +271,7 @@ public static class FatxPartitionProbe
         Stream source,
         long sourceLength,
         ProbeCandidate candidate,
-        FatxByteOrder requiredByteOrder,
+        FatxByteOrder? requiredByteOrder,
         Action<string>? diagnostic)
     {
         if (!WithinSource(candidate.Offset, candidate.Length, sourceLength))
@@ -267,7 +287,7 @@ public static class FatxPartitionProbe
             diagnostic?.Invoke($"{candidate.Name}: header parsed as {volume.Metadata.ByteOrder}, {volume.Metadata.AllocationTable}, " +
                 $"sector={volume.Metadata.SectorSize}, SPC={volume.Metadata.SectorsPerCluster}, " +
                 $"root={volume.Metadata.RootFirstCluster}, data=0x{volume.Metadata.DataOffset:X}.");
-            if (volume.Metadata.ByteOrder != requiredByteOrder)
+            if (requiredByteOrder is not null && volume.Metadata.ByteOrder != requiredByteOrder)
             {
                 diagnostic?.Invoke($"{candidate.Name}: rejected because this layout requires {requiredByteOrder} FATX metadata.");
                 return null;

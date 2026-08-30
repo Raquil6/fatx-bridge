@@ -36,7 +36,8 @@ public sealed class FatxMountBroker : IFatxMountSession
     public string MountPath { get; }
 
     public static async Task<FatxMountBroker> MountAsync(string physicalPath, long capacity,
-        FatxPartitionCandidate partition, bool readOnly, CancellationToken cancellationToken = default)
+        FatxPartitionCandidate partition, bool readOnly, string? volumeLabel = null,
+        CancellationToken cancellationToken = default)
     {
         string pipeName = $"FatxBridge-Mount-{Guid.NewGuid():N}";
         var pipe = new NamedPipeServerStream(pipeName, PipeDirection.InOut, 1,
@@ -71,7 +72,7 @@ public sealed class FatxMountBroker : IFatxMountSession
                 throw new Win32Exception(Marshal.GetLastWin32Error(), "Windows could not pass the raw-disk handle to the mount helper.");
 
             var request = new MountRequest((long)childHandle, capacity, partition.Name, partition.Offset,
-                partition.Length, partition.Metadata, readOnly);
+                partition.Length, partition.Metadata, readOnly, volumeLabel);
             await writer.WriteLineAsync(JsonSerializer.Serialize(request));
 
             string response = await reader.ReadLineAsync(cancellationToken)
@@ -137,7 +138,8 @@ public sealed class FatxMountBroker : IFatxMountSession
             var safeHandle = new SafeFileHandle(new IntPtr(request.Handle), ownsHandle: true);
             var stream = new FileStream(safeHandle, request.ReadOnly ? FileAccess.Read : FileAccess.ReadWrite);
             var partition = new FatxPartitionCandidate(request.Name, request.Offset, request.Length, request.Metadata);
-            mount = FatxWinFspMount.MountOpened(stream, request.Capacity, partition, request.ReadOnly, useDriveLetter: true);
+            mount = FatxWinFspMount.MountOpened(stream, request.Capacity, partition, request.ReadOnly,
+                useDriveLetter: true, volumeLabel: request.VolumeLabel);
 
             await Task.Delay(500);
             _ = Directory.GetFileSystemEntries(mount.MountPath);
@@ -335,7 +337,7 @@ public sealed class FatxMountBroker : IFatxMountSession
     }
 
     private sealed record MountRequest(long Handle, long Capacity, string Name, long Offset, long Length,
-        FatxVolumeMetadata Metadata, bool ReadOnly);
+        FatxVolumeMetadata Metadata, bool ReadOnly, string? VolumeLabel);
 
     private const uint TokenAssignPrimary = 0x0001, TokenDuplicate = 0x0002, TokenQuery = 0x0008,
         TokenAdjustPrivileges = 0x0020;

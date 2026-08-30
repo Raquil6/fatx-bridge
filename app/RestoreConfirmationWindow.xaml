@@ -1,0 +1,19 @@
+<Window x:Class="FatxBridge.Windows.RestoreConfirmationWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Confirm complete device restore" Height="330" Width="610"
+        ResizeMode="NoResize" WindowStartupLocation="CenterOwner"
+        Background="#0E1116" Foreground="#EEF4F0">
+  <Grid Margin="24">
+    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+    <TextBlock Text="This will overwrite the entire physical device." FontSize="19" FontWeight="SemiBold" Foreground="#FFB4A9"/>
+    <TextBlock Grid.Row="1" x:Name="DetailsText" Margin="0,14,0,0" TextWrapping="Wrap" Foreground="#B5C4BD"/>
+    <TextBlock Grid.Row="2" x:Name="InstructionText" Margin="0,18,0,6" TextWrapping="Wrap"/>
+    <TextBox Grid.Row="3" x:Name="ConfirmationText" TextChanged="ConfirmationText_Changed" Padding="8" Background="#202631" Foreground="#EEF4F0" BorderBrush="#596760"/>
+    <TextBlock Grid.Row="4" Margin="0,12,0,0" Text="Once writing begins it cannot be cancelled safely. Security-sector bytes are copied exactly as they exist in the image; FATX Bridge does not require one." TextWrapping="Wrap" Foreground="#9AA7A1"/>
+    <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Right">
+      <Button Content="Cancel" Click="Cancel_Click"/>
+      <Button x:Name="RestoreButton" Content="Restore entire device" Click="Restore_Click" IsEnabled="False" Background="#7A302C"/>
+    </StackPanel>
+  </Grid>
+</Window>

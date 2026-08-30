@@ -1,9 +1,9 @@
 #ifndef MyAppVersion
-  #define MyAppVersion "0.2.0-beta.3"
+  #define MyAppVersion "0.3.0-beta.1"
 #endif
 
 #ifndef MyAppNumericVersion
-  #define MyAppNumericVersion "0.2.0.3"
+  #define MyAppNumericVersion "0.3.0.1"
 #endif
 
 #define MyAppName "FATX Bridge"

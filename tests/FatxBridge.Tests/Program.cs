@@ -1,4 +1,6 @@
 using System.Buffers.Binary;
+using System.Security.Cryptography;
+using System.Text;
 using FatxBridge.Core;
 
 var tests = new (string Name, Action Run)[]
@@ -9,10 +11,25 @@ var tests = new (string Name, Action Run)[]
     ("invalid signature/header rejection", InvalidHeaderRejected),
     ("out-of-range and cyclic chain rejection", BadChainsRejected),
     ("standard offset sparse partition detection", StandardOffsetDetection),
+    ("Xbox 360 Content detection does not require a security sector", SecuritylessXbox360Detection),
+    ("Xbox 360 security sector valid present classification", SecuritySectorPresent),
+    ("Xbox 360 security sector blank classification", SecuritySectorAbsent),
+    ("Xbox 360 security sector malformed classification", SecuritySectorInvalid),
+    ("Xbox 360 security sector logo digest mismatch", SecuritySectorDigestMismatch),
+    ("Xbox 360 security sector logo bounds rejection", SecuritySectorLogoBoundsRejected),
+    ("Xbox 360 security sector truncated logo is unavailable", SecuritySectorLogoTruncated),
+    ("Xbox 360 security sector truncated classification", SecuritySectorUnavailable),
+    ("Xbox 360 security sector fingerprint is stable", SecuritySectorFingerprintStable),
+    ("STFS CON metadata parses with big-endian fields", StfsConMetadata),
+    ("STFS LIVE and PIRS signatures are recognized", StfsLiveAndPirsMetadata),
+    ("STFS metadata version 2 localized fields parse", StfsMetadataVersion2),
+    ("STFS metadata truncation and invalid magic are bounded", StfsMetadataBoundaries),
+    ("STFS metadata absurd sizes are rejected", StfsMetadataAbsurdSizes),
     ("original Xbox fixed HDD partition detection", OriginalXboxFixedPartitionDetection),
     ("original Xbox XBPartitioner extended partition detection", OriginalXboxPartitionTableDetection),
     ("original Xbox legacy F-takes-all detection", OriginalXboxLegacyExtendedDetection),
     ("original Xbox whole-device memory unit detection", OriginalXboxMemoryUnitDetection),
+    ("standalone FATX partition image detection", StandaloneFatxImageDetection),
     ("invalid XBPartitioner entries are never advertised", InvalidOriginalXboxPartitionTableRejected),
     ("corrupt XBPartitioner tables block guessed extended bounds", CorruptOriginalXboxPartitionTableBlocksFallback),
     ("deleted directory entry filtering", DeletedEntriesIgnored),
@@ -39,6 +56,14 @@ var tests = new (string Name, Action Run)[]
     ("free-space scan uses FAT pages", FreeSpaceUsesFatPages),
     ("bulk preallocation and aligned writes are batched", BulkWritesAreBatched),
     ("cached open-file writes avoid directory seek thrashing", CachedOpenFileWritesAvoidMetadataThrashing),
+    ("FATX formatter publishes a bounded validated image", FormatterCreatesValidatedImage),
+    ("deleted-file recovery exports only free contiguous candidates", DeletedFileRecoveryIsConservative),
+    ("segmented read-only stream crosses Data file boundaries", SegmentedReadOnlyStreamCrossesBoundaries),
+    ("Xbox 360 USB configuration parsing is bounded", Xbox360UsbConfigurationIsBounded),
+    ("raw storage inspection is capped and position preserving", RawStorageInspectionIsBounded),
+    ("raw image copy is verified by SHA-256", RawImageCopyIsVerified),
+    ("raw image copy and verification work with real files", RawImageFileCopyIsVerified),
+    ("raw image copy honors cancellation before writing", RawImageCopyCancellation),
 };
 
 int failures = 0;
@@ -127,6 +152,326 @@ static void OriginalXboxFixedPartitionDetection()
     Assert(partition.SupportsWrite, "validated original Xbox partitions should expose experimental write mounting");
 }
 
+static void SecuritylessXbox360Detection()
+{
+    const long contentOffset = 0x130EB0000;
+    const long contentLength = 64 * 1024 * 1024;
+    using var disk = new SparseStream(contentOffset + contentLength);
+    FatxFixture.WriteVolume(disk, contentOffset, contentLength, FatxByteOrder.BigEndian, 8);
+    FatxStorageDetection detection = FatxPartitionProbe.DetectSupportedStorage(disk)
+        ?? throw new InvalidOperationException("securityless Xbox 360 disk was not detected");
+    Assert(detection.Kind == FatxStorageKind.Xbox360HardDrive,
+        "securityless Xbox 360 layout was misclassified");
+    Assert(detection.Partitions.Any(partition => partition.Name == "Content" &&
+        partition.Offset == contentOffset && partition.SupportsWrite),
+        "securityless Xbox 360 Content partition was not exposed for mounting");
+}
+
+static void SecuritySectorPresent()
+{
+    byte[] payload = SyntheticSecuritySector();
+    using var source = new MemoryStream(new byte[checked((int)(Xbox360SecuritySector.SectorOffset + Xbox360SecuritySector.PayloadSize))], writable: true);
+    source.Position = Xbox360SecuritySector.SectorOffset;
+    source.Write(payload);
+    source.Position = 123;
+
+    Xbox360SecuritySectorResult result = Xbox360SecuritySector.Detect(source, source.Length);
+    Assert(result.State == Xbox360SecuritySectorState.Present, "structured HDDSS payload was not classified present");
+    Assert(result.Length == Xbox360SecuritySector.PayloadSize, "present result length is not the complete HDDSS payload size");
+    Assert(result.Bytes is not null && result.Bytes.SequenceEqual(payload), "present result bytes differ from source");
+    Assert(source.Position == 123, "security-sector inspection did not restore stream position");
+    Assert(result.LogoSize == 2754, "present result did not expose the declared logo size");
+    Assert(result.Sha256 == Xbox360SecuritySector.ComputeSha256(payload), "HDDSS payload fingerprint mismatch");
+}
+
+static void SecuritySectorAbsent()
+{
+    byte[] image = new byte[checked((int)(Xbox360SecuritySector.SectorOffset + Xbox360SecuritySector.PayloadSize))];
+    image.AsSpan(checked((int)Xbox360SecuritySector.SectorOffset + Xbox360SecuritySector.SectorSize),
+        Xbox360SecuritySector.PayloadSize - Xbox360SecuritySector.SectorSize).Fill(0xA5);
+    using var source = new MemoryStream(image, writable: false);
+    Xbox360SecuritySectorResult result = Xbox360SecuritySector.Detect(source, source.Length);
+    Assert(result.State == Xbox360SecuritySectorState.Absent, "blank sector-16 header was not classified absent");
+    Assert(result.Length == Xbox360SecuritySector.PayloadSize, "absent result length is not the complete HDDSS payload size");
+    Assert(result.Bytes is null && result.Sha256 is null, "absent HDDSS payload exposed bytes");
+}
+
+static void SecuritySectorInvalid()
+{
+    byte[] payload = SyntheticSecuritySector();
+    payload[Xbox360SecuritySector.FirmwareRevisionOffset] = 0xFF;
+    Xbox360SecuritySectorResult result = Xbox360SecuritySector.Validate(payload);
+    Assert(result.State == Xbox360SecuritySectorState.Invalid, "malformed HDDSS payload was not classified invalid");
+    Assert(result.Bytes is null && result.Sha256 is null, "invalid HDDSS payload exposed bytes");
+}
+
+static void SecuritySectorDigestMismatch()
+{
+    byte[] payload = SyntheticSecuritySector();
+    payload[Xbox360SecuritySector.LogoDataOffset] ^= 0x01;
+    Xbox360SecuritySectorResult result = Xbox360SecuritySector.Validate(payload);
+    Assert(result.State == Xbox360SecuritySectorState.Invalid, "logo digest mismatch was not classified invalid");
+    Assert(result.Bytes is null && result.Sha256 is null, "digest-mismatched HDDSS payload exposed bytes");
+}
+
+static void SecuritySectorLogoBoundsRejected()
+{
+    byte[] oversized = SyntheticSecuritySector();
+    BinaryPrimitives.WriteInt32BigEndian(
+        oversized.AsSpan(Xbox360SecuritySector.LogoSizeOffset, Xbox360SecuritySector.LogoSizeLength),
+        Xbox360SecuritySector.PayloadSize - Xbox360SecuritySector.LogoDataOffset + 1);
+    Xbox360SecuritySectorResult oversizedResult = Xbox360SecuritySector.Validate(oversized);
+    Assert(oversizedResult.State == Xbox360SecuritySectorState.Invalid,
+        "oversized logo declaration was not classified invalid");
+
+    byte[] negative = SyntheticSecuritySector();
+    BinaryPrimitives.WriteInt32BigEndian(
+        negative.AsSpan(Xbox360SecuritySector.LogoSizeOffset, Xbox360SecuritySector.LogoSizeLength), -1);
+    Xbox360SecuritySectorResult negativeResult = Xbox360SecuritySector.Validate(negative);
+    Assert(negativeResult.State == Xbox360SecuritySectorState.Invalid,
+        "negative logo declaration was not classified invalid");
+}
+
+static void SecuritySectorUnavailable()
+{
+    byte[] payload = SyntheticSecuritySector();
+    long truncatedLength = Xbox360SecuritySector.SectorOffset + Xbox360SecuritySector.PayloadSize - 1;
+    byte[] image = new byte[checked((int)truncatedLength)];
+    payload.AsSpan(0, image.Length - checked((int)Xbox360SecuritySector.SectorOffset)).CopyTo(
+        image.AsSpan(checked((int)Xbox360SecuritySector.SectorOffset)));
+    using var source = new MemoryStream(image, writable: false);
+    Xbox360SecuritySectorResult result = Xbox360SecuritySector.Detect(source, truncatedLength);
+    Assert(result.State == Xbox360SecuritySectorState.Unavailable, "truncated HDDSS payload was not classified unavailable");
+    Assert(result.Length == Xbox360SecuritySector.PayloadSize, "unavailable result did not report the complete payload length");
+    Assert(result.Bytes is null, "unavailable HDDSS payload exposed bytes");
+}
+
+static void SecuritySectorLogoTruncated()
+{
+    byte[] payload = SyntheticSecuritySector();
+    long truncatedLength = Xbox360SecuritySector.SectorOffset + Xbox360SecuritySector.LogoDataOffset + 2754 - 1;
+    byte[] image = new byte[checked((int)truncatedLength)];
+    payload.AsSpan(0, image.Length - checked((int)Xbox360SecuritySector.SectorOffset)).CopyTo(
+        image.AsSpan(checked((int)Xbox360SecuritySector.SectorOffset)));
+    using var source = new MemoryStream(image, writable: false);
+    Xbox360SecuritySectorResult result = Xbox360SecuritySector.Detect(source, truncatedLength);
+    Assert(result.State == Xbox360SecuritySectorState.Unavailable,
+        "payload truncated inside the declared logo was not classified unavailable");
+    Assert(result.Bytes is null, "truncated logo exposed partial HDDSS bytes");
+}
+
+static void SecuritySectorFingerprintStable()
+{
+    byte[] payload = SyntheticSecuritySector();
+    byte[] firstImage = new byte[checked((int)(Xbox360SecuritySector.SectorOffset + Xbox360SecuritySector.PayloadSize))];
+    byte[] secondImage = new byte[firstImage.Length];
+    Array.Fill(secondImage, (byte)0xA5);
+    payload.CopyTo(firstImage, Xbox360SecuritySector.SectorOffset);
+    payload.CopyTo(secondImage, Xbox360SecuritySector.SectorOffset);
+
+    Xbox360SecuritySectorResult first = Xbox360SecuritySector.Detect(
+        new MemoryStream(firstImage, writable: false), firstImage.LongLength);
+    Xbox360SecuritySectorResult second = Xbox360SecuritySector.Detect(
+        new MemoryStream(secondImage, writable: false), secondImage.LongLength);
+    Assert(first.State == Xbox360SecuritySectorState.Present && second.State == Xbox360SecuritySectorState.Present,
+        "stable-fingerprint fixtures were not present");
+    Assert(first.Fingerprint == second.Fingerprint, "same security sector produced different fingerprints");
+}
+
+static void StfsConMetadata()
+{
+    byte[] header = SyntheticStfsHeader("CON ", metadataVersion: 1);
+    using var source = new MemoryStream(header, writable: false);
+    source.Position = 73;
+    StfsMetadataResult result = StfsMetadata.Detect(source, source.Length);
+    StfsMetadata metadata = result.Metadata ?? throw new InvalidOperationException("CON metadata was not returned");
+    Assert(result.State == StfsMetadataState.Present && result.SignatureKind == StfsSignatureKind.Con,
+        "CON metadata was not classified present");
+    Assert(result.Magic == "CON ", "CON magic was not preserved");
+    Assert(result.CryptographicVerificationPerformed == false && metadata.CryptographicVerificationPerformed == false,
+        "STFS parser claimed cryptographic verification");
+    Assert(source.Position == 73, "STFS metadata inspection did not restore stream position");
+    Assert(metadata.HeaderSize == 0x971A && metadata.ContentType == 0x000D0000 && metadata.MetadataVersion == 1,
+        "STFS header or metadata version was not parsed as big-endian");
+    Assert(metadata.ContentSize == 0x123456789L && metadata.MediaId == 0x10203040 &&
+        metadata.Version == 0x01020304 && metadata.BaseVersion == 0x05060708 &&
+        metadata.TitleId == 0x5E2A1234,
+        "STFS numeric metadata fields were not parsed correctly");
+    Assert(metadata.Platform == 2 && metadata.ExecutableType == 1 && metadata.DiscNumber == 2 &&
+        metadata.DiscInSet == 3 && metadata.TransferFlags == 0xA5,
+        "STFS platform, disc, or transfer fields were not parsed correctly");
+    Assert(metadata.DisplayName == "English Package" && metadata.DisplayDescription == "English Description" &&
+        metadata.PublisherName == "Publisher" && metadata.TitleName == "Title Name",
+        "UTF-16BE metadata text was not trimmed or selected correctly");
+    Assert(metadata.DisplayNames.Count == StfsMetadata.Version1LanguageCount &&
+        metadata.GetDisplayName(StfsLanguage.Japanese) == "日本語",
+        "base localized display-name slots were not decoded");
+}
+
+static void StfsLiveAndPirsMetadata()
+{
+    foreach (string magic in new[] { "LIVE", "PIRS" })
+    {
+        StfsMetadataResult result = StfsMetadata.Parse(SyntheticStfsHeader(magic, metadataVersion: 1));
+        Assert(result.State == StfsMetadataState.Present, $"{magic} metadata was not classified present");
+        Assert(result.SignatureKind == (magic == "LIVE" ? StfsSignatureKind.Live : StfsSignatureKind.Pirs),
+            $"{magic} signature kind was not recognized");
+    }
+}
+
+static void StfsMetadataVersion2()
+{
+    byte[] header = SyntheticStfsHeader("PIRS", metadataVersion: 2);
+    StfsMetadataResult result = StfsMetadata.Parse(header);
+    StfsMetadata metadata = result.Metadata ?? throw new InvalidOperationException("version-2 metadata was not returned");
+    Assert(result.State == StfsMetadataState.Present && metadata.MetadataVersion == 2,
+        "version-2 metadata was not classified present");
+    Assert(metadata.DisplayNames.Count == StfsMetadata.Version1LanguageCount + StfsMetadata.Version2AdditionalLanguageCount &&
+        metadata.Descriptions.Count == StfsMetadata.Version1LanguageCount + StfsMetadata.Version2AdditionalLanguageCount,
+        "version-2 localized slot counts were not honored");
+    Assert(metadata.GetDisplayName(StfsLanguage.Polish) == "Polski" &&
+        metadata.GetDescription(StfsLanguage.Russian) == "Описание",
+        "version-2 extended localized slots were not decoded");
+    Assert(metadata.SeriesId is not null && metadata.SeriesId.SequenceEqual(Enumerable.Range(1, 16).Select(value => (byte)value)) &&
+        metadata.SeasonId is not null && metadata.SeasonId.SequenceEqual(Enumerable.Range(0xA0, 16).Select(value => (byte)value)) &&
+        metadata.SeasonNumber == 4 && metadata.EpisodeNumber == 9,
+        "version-2 series/season/episode fields were not parsed");
+}
+
+static void StfsMetadataBoundaries()
+{
+    byte[] version1 = SyntheticStfsHeader("CON ", metadataVersion: 1);
+    StfsMetadataResult shortBase = StfsMetadata.Parse(version1.AsSpan(0, StfsMetadata.MinimumMetadataBytes - 1));
+    Assert(shortBase.State == StfsMetadataState.Unavailable, "one-byte-short base metadata was not unavailable");
+    StfsMetadataResult exactBase = StfsMetadata.Parse(version1.AsSpan(0, StfsMetadata.MinimumMetadataBytes));
+    Assert(exactBase.State == StfsMetadataState.Present, "exact base metadata boundary was not accepted");
+
+    byte[] version2 = SyntheticStfsHeader("CON ", metadataVersion: 2);
+    StfsMetadataResult shortVersion2 = StfsMetadata.Parse(version2.AsSpan(0, StfsMetadata.Version2MetadataBytes - 1));
+    Assert(shortVersion2.State == StfsMetadataState.Unavailable, "one-byte-short version-2 metadata was not unavailable");
+    StfsMetadataResult exactVersion2 = StfsMetadata.Parse(version2.AsSpan(0, StfsMetadata.Version2MetadataBytes));
+    Assert(exactVersion2.State == StfsMetadataState.Present, "exact version-2 metadata boundary was not accepted");
+
+    byte[] invalidMagic = (byte[])version1.Clone();
+    invalidMagic[0] = (byte)'X';
+    StfsMetadataResult unsupported = StfsMetadata.Parse(invalidMagic);
+    Assert(unsupported.State == StfsMetadataState.Unsupported, "invalid package magic was not unsupported");
+}
+
+static void StfsMetadataAbsurdSizes()
+{
+    byte[] absurdHeader = SyntheticStfsHeader("CON ", metadataVersion: 1);
+    BinaryPrimitives.WriteUInt32BigEndian(
+        absurdHeader.AsSpan(StfsMetadata.HeaderSizeOffset, StfsMetadata.HeaderSizeLength), uint.MaxValue);
+    Assert(StfsMetadata.Parse(absurdHeader).State == StfsMetadataState.Invalid,
+        "absurd STFS header size was not rejected");
+
+    byte[] absurdContent = SyntheticStfsHeader("CON ", metadataVersion: 1);
+    BinaryPrimitives.WriteInt64BigEndian(absurdContent.AsSpan(StfsMetadata.ContentSizeOffset, sizeof(long)), long.MaxValue);
+    Assert(StfsMetadata.Parse(absurdContent).State == StfsMetadataState.Invalid,
+        "absurd STFS content size was not rejected");
+}
+
+static byte[] SyntheticStfsHeader(string magic, uint metadataVersion)
+{
+    int length = metadataVersion == 2 ? StfsMetadata.Version2MetadataBytes : StfsMetadata.MaximumHeaderRead;
+    byte[] header = new byte[length];
+    Encoding.ASCII.GetBytes(magic, header.AsSpan(StfsMetadata.MagicOffset, StfsMetadata.MagicLength));
+    BinaryPrimitives.WriteUInt32BigEndian(
+        header.AsSpan(StfsMetadata.HeaderSizeOffset, StfsMetadata.HeaderSizeLength),
+        (uint)(metadataVersion == 2 ? StfsMetadata.Version2MetadataBytes : 0x971A));
+    BinaryPrimitives.WriteUInt32BigEndian(
+        header.AsSpan(StfsMetadata.ContentTypeOffset, sizeof(uint)), 0x000D0000);
+    BinaryPrimitives.WriteUInt32BigEndian(
+        header.AsSpan(StfsMetadata.MetadataVersionOffset, sizeof(uint)), metadataVersion);
+    BinaryPrimitives.WriteInt64BigEndian(
+        header.AsSpan(StfsMetadata.ContentSizeOffset, sizeof(long)), 0x123456789L);
+    BinaryPrimitives.WriteUInt32BigEndian(
+        header.AsSpan(StfsMetadata.MediaIdOffset, sizeof(uint)), 0x10203040);
+    BinaryPrimitives.WriteInt32BigEndian(
+        header.AsSpan(StfsMetadata.VersionOffset, sizeof(int)), 0x01020304);
+    BinaryPrimitives.WriteInt32BigEndian(
+        header.AsSpan(StfsMetadata.BaseVersionOffset, sizeof(int)), 0x05060708);
+    BinaryPrimitives.WriteUInt32BigEndian(
+        header.AsSpan(StfsMetadata.TitleIdOffset, sizeof(uint)), 0x5E2A1234);
+    header[StfsMetadata.PlatformOffset] = 2;
+    header[StfsMetadata.ExecutableTypeOffset] = 1;
+    header[StfsMetadata.DiscNumberOffset] = 2;
+    header[StfsMetadata.DiscInSetOffset] = 3;
+    BinaryPrimitives.WriteUInt32BigEndian(
+        header.AsSpan(StfsMetadata.SaveGameIdOffset, sizeof(uint)), 0xCAFEBABE);
+    header[StfsMetadata.TransferFlagsOffset] = 0xA5;
+
+    WriteUtf16Be(header, StfsMetadata.DisplayNameOffset, StfsMetadata.LanguageSlotSize, "English Package ");
+    WriteUtf16Be(header, StfsMetadata.DisplayNameOffset + StfsMetadata.LanguageSlotSize, StfsMetadata.LanguageSlotSize, "日本語");
+    WriteUtf16Be(header, StfsMetadata.DescriptionOffset, StfsMetadata.LanguageSlotSize, "English Description ");
+    WriteUtf16Be(header, StfsMetadata.PublisherNameOffset, 0x80, "Publisher ");
+    WriteUtf16Be(header, StfsMetadata.TitleNameOffset, 0x80, "Title Name ");
+
+    if (metadataVersion == 2)
+    {
+        for (int index = 0; index < StfsMetadata.SeriesIdLength; index++)
+            header[StfsMetadata.SeriesIdOffset + index] = checked((byte)(index + 1));
+        for (int index = 0; index < StfsMetadata.SeasonIdLength; index++)
+            header[StfsMetadata.SeasonIdOffset + index] = checked((byte)(0xA0 + index));
+        BinaryPrimitives.WriteInt16BigEndian(
+            header.AsSpan(StfsMetadata.SeasonNumberOffset, sizeof(short)), 4);
+        BinaryPrimitives.WriteInt16BigEndian(
+            header.AsSpan(StfsMetadata.EpisodeNumberOffset, sizeof(short)), 9);
+        WriteUtf16Be(header, StfsMetadata.Version2DisplayNameOffset + StfsMetadata.LanguageSlotSize,
+            StfsMetadata.LanguageSlotSize, "Polski");
+        WriteUtf16Be(header, StfsMetadata.Version2DescriptionOffset + 2 * StfsMetadata.LanguageSlotSize,
+            StfsMetadata.LanguageSlotSize, "Описание");
+    }
+
+    return header;
+}
+
+static void WriteUtf16Be(byte[] target, int offset, int capacity, string value)
+{
+    target.AsSpan(offset, capacity).Clear();
+    int characterCount = Math.Min(value.Length, capacity / sizeof(ushort));
+    for (int index = 0; index < characterCount; index++)
+        BinaryPrimitives.WriteUInt16BigEndian(target.AsSpan(offset + index * sizeof(ushort), sizeof(ushort)), value[index]);
+}
+
+[System.Diagnostics.CodeAnalysis.SuppressMessage(
+    "Security",
+    "CA5350",
+    Justification = "The synthetic fixture must populate the legacy SHA-1 logo digest field defined by the Xbox 360 HDDSS format.")]
+static byte[] SyntheticSecuritySector()
+{
+    byte[] payload = new byte[Xbox360SecuritySector.PayloadSize];
+    WriteAscii(payload, Xbox360SecuritySector.SerialNumberOffset, Xbox360SecuritySector.SerialNumberLength, "SNTEST000000000001");
+    WriteAscii(payload, Xbox360SecuritySector.FirmwareRevisionOffset, Xbox360SecuritySector.FirmwareRevisionLength, "FW000001");
+    WriteAscii(payload, Xbox360SecuritySector.ModelNumberOffset, Xbox360SecuritySector.ModelNumberLength, "XBOX360 TEST HDD");
+    BinaryPrimitives.WriteUInt32LittleEndian(
+        payload.AsSpan(Xbox360SecuritySector.UserAddressableSectorsOffset, Xbox360SecuritySector.UserAddressableSectorsLength),
+        0x01234567);
+    for (int index = 0; index < Xbox360SecuritySector.RsaSignatureLength; index++)
+        payload[Xbox360SecuritySector.RsaSignatureOffset + index] = unchecked((byte)(index * 13 + 7));
+
+    const int logoSize = 2754;
+    ReadOnlySpan<byte> pngSignature = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+    payload.AsSpan(Xbox360SecuritySector.LogoDataOffset, logoSize).Fill(0x4D);
+    pngSignature.CopyTo(payload.AsSpan(Xbox360SecuritySector.LogoDataOffset, pngSignature.Length));
+    for (int index = pngSignature.Length; index < logoSize; index++)
+        payload[Xbox360SecuritySector.LogoDataOffset + index] = unchecked((byte)(index * 19 + 5));
+    payload.AsSpan(Xbox360SecuritySector.LogoDataOffset + logoSize).Fill(0xCC);
+    BinaryPrimitives.WriteInt32BigEndian(
+        payload.AsSpan(Xbox360SecuritySector.LogoSizeOffset, Xbox360SecuritySector.LogoSizeLength), logoSize);
+    SHA1.HashData(payload.AsSpan(Xbox360SecuritySector.LogoDataOffset, logoSize)).CopyTo(
+        payload.AsSpan(Xbox360SecuritySector.LogoDigestOffset, Xbox360SecuritySector.LogoDigestLength));
+    return payload;
+}
+
+static void WriteAscii(byte[] target, int offset, int length, string value)
+{
+    if (value.Length > length) throw new InvalidOperationException("synthetic field is too long");
+    target.AsSpan(offset, length).Fill((byte)' ');
+    System.Text.Encoding.ASCII.GetBytes(value, target.AsSpan(offset, value.Length));
+}
+
 static void OriginalXboxPartitionTableDetection()
 {
     const long offset = 0x200000;
@@ -176,6 +521,19 @@ static void InvalidOriginalXboxPartitionTableRejected()
     WriteXbPartitionEntry(disk, 5, "XBOX F", 0x800000, 0x1000000, active: true);
     IReadOnlyList<FatxPartitionCandidate> found = FatxPartitionProbe.DetectOriginalXboxPartitions(disk);
     Assert(found.Count == 0, "out-of-range XBPartitioner entry was advertised");
+}
+
+static void StandaloneFatxImageDetection()
+{
+    const long length = 32 * 1024 * 1024;
+    using var image = new SparseStream(length);
+    FatxFixture.WriteVolume(image, 0, length, FatxByteOrder.BigEndian, 8);
+    FatxStorageDetection detection = FatxPartitionProbe.DetectImage(image)
+        ?? throw new InvalidOperationException("standalone FATX image was not detected");
+    Assert(detection.Kind == FatxStorageKind.StandaloneFatxImage,
+        "standalone FATX partition image was misclassified");
+    Assert(detection.Partitions.Count == 1 && detection.Partitions[0].Offset == 0 &&
+        detection.Partitions[0].Length == length, "standalone image bounds are incorrect");
 }
 
 static void CorruptOriginalXboxPartitionTableBlocksFallback()
@@ -532,6 +890,151 @@ static void WriteMaximumRootEntries(FatxFixture fixture, uint tail)
 }
 
 static void Assert(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); }
+
+static void FormatterCreatesValidatedImage()
+{
+    const long length = 8 * 1024 * 1024;
+    using var image = new SparseStream(length);
+    image.Position = 73;
+    FatxFormatResult result = FatxFormatter.Format(image,
+        new FatxFormatOptions(0, length, FatxByteOrder.LittleEndian, 512, 8, FatxFormatMode.Quick, 0xA1B2C3D4));
+    Assert(image.Position == 73, "formatter did not restore the caller's stream position");
+    Assert(result.Metadata.SerialNumber == 0xA1B2C3D4 && result.Metadata.SectorsPerCluster == 8,
+        "formatter result did not preserve the requested geometry");
+    FatxVolume reopened = FatxVolume.Open(image, 0, length);
+    Assert(reopened.ListRootDirectory().Count == 0, "formatted root directory was not empty");
+    Assert(result.BytesWritten < length, "quick format unexpectedly rewrote the complete image");
+}
+
+static void DeletedFileRecoveryIsConservative()
+{
+    using var fixture = FatxFixture.Create(4 * 1024 * 1024);
+    FatxVolume volume = fixture.Open();
+    byte[] payload = Encoding.ASCII.GetBytes("recoverable FATX bytes");
+    volume.CreateFile("/LOST.BIN");
+    volume.WriteFile("/LOST.BIN", 0, payload);
+    volume.DeleteFile("/LOST.BIN");
+
+    FatxDeletedEntryCandidate candidate = volume.EnumerateDeletedEntries().Single();
+    Assert(candidate.CanAttemptRead && candidate.Classification == FatxDeletedEntryClassification.ContiguousUnallocated,
+        "freshly deleted file was not classified as a free contiguous candidate");
+    using var destination = new MemoryStream();
+    Assert(volume.ExportDeletedFile(candidate, destination) == payload.Length,
+        "recovery export returned the wrong length");
+    Assert(destination.ToArray().SequenceEqual(payload), "recovered bytes did not match the deleted payload");
+
+    volume.CreateFile("/REUSED.BIN");
+    volume.WriteFile("/REUSED.BIN", 0, "replacement"u8);
+    AssertThrows<FatxRecoveryException>(() => volume.ReadDeletedFile(candidate, 0, payload.Length));
+}
+
+static void SegmentedReadOnlyStreamCrossesBoundaries()
+{
+    using var first = new MemoryStream("ABC"u8.ToArray(), writable: false);
+    using var second = new MemoryStream("DEFG"u8.ToArray(), writable: false);
+    using var third = new MemoryStream("HI"u8.ToArray(), writable: false);
+    using var combined = new SegmentedReadOnlyStream(new Stream[] { first, second, third }, leaveOpen: true);
+    combined.Position = 2;
+    Span<byte> bytes = stackalloc byte[6];
+    Assert(combined.Read(bytes) == 6 && bytes.SequenceEqual("CDEFGH"u8),
+        "cross-segment read did not preserve byte order");
+    Assert(!combined.CanWrite, "segmented container stream exposed write access");
+    AssertThrows<NotSupportedException>(() => combined.WriteByte(0xFF));
+}
+
+static void Xbox360UsbConfigurationIsBounded()
+{
+    var configuration = new byte[Xbox360UsbContainer.ConfigurationSize];
+    BinaryPrimitives.WriteUInt32BigEndian(configuration.AsSpan(0x23C, 4), 0x228);
+    BinaryPrimitives.WriteUInt64BigEndian(configuration.AsSpan(0x240, 8), 16UL * 1024 * 1024 * 1024);
+    BinaryPrimitives.WriteUInt16BigEndian(configuration.AsSpan(0x248, 2), 31_000);
+    BinaryPrimitives.WriteUInt16BigEndian(configuration.AsSpan(0x24A, 2), 22_000);
+    Xbox360UsbConfiguration parsed = Xbox360UsbContainer.ParseConfiguration(configuration);
+    Assert(parsed.ValidationState == Xbox360UsbConfigurationValidationState.StructurallyValid,
+        "complete type-1 configuration was not structurally valid");
+    Assert(parsed.DeviceCapacityBytes == 16UL * 1024 * 1024 * 1024 && !parsed.SignatureWasVerified,
+        "USB configuration fields or signature trust boundary were wrong");
+    Xbox360UsbConfiguration truncated = Xbox360UsbContainer.ParseConfiguration(configuration.AsSpan(0, 0x100));
+    Assert(truncated.ValidationState == Xbox360UsbConfigurationValidationState.Truncated && truncated.BytesRead == 0x100,
+        "truncated configuration was not reported without over-reading");
+}
+
+static void RawStorageInspectionIsBounded()
+{
+    byte[] bytes = Enumerable.Range(0, 100_000).Select(value => unchecked((byte)value)).ToArray();
+    using var source = new MemoryStream(bytes, writable: false);
+    source.Position = 321;
+    var inspector = new RawStorageInspector(source, source.Length, 512);
+    RawStorageView view = inspector.ReadRange(17, 80_000);
+    Assert(view.Length == RawStorageInspector.MaximumViewBytes && view.IsTruncated,
+        "raw inspector did not cap its display view to 64 KiB");
+    Assert(source.Position == 321, "raw inspector did not restore the caller's stream position");
+    Assert(view.Bytes[0] == bytes[17] && view.HexDump.Contains("0000000000000011", StringComparison.Ordinal),
+        "raw inspector returned the wrong byte range or address");
+}
+
+static void RawImageCopyIsVerified()
+{
+    byte[] bytes = new byte[9 * 1024 * 1024 + 317];
+    for (int index = 0; index < bytes.Length; index++) bytes[index] = unchecked((byte)(index * 29 + 11));
+    using var source = new MemoryStream(bytes, writable: false);
+    using var destination = new MemoryStream(new byte[bytes.Length], writable: true);
+    RawImageResult result = RawImageOperations.CopyAndVerifyAsync(source, destination, bytes.Length)
+        .GetAwaiter().GetResult();
+    Assert(result.BytesCopied == bytes.Length, "raw image byte count mismatch");
+    Assert(destination.ToArray().SequenceEqual(bytes), "raw image destination differs from source");
+    Assert(result.Sha256 == Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)),
+        "raw image SHA-256 mismatch");
+}
+
+static void RawImageFileCopyIsVerified()
+{
+    string directory = Path.Combine(Path.GetTempPath(), $"fatx-bridge-image-test-{Guid.NewGuid():N}");
+    string sourcePath = Path.Combine(directory, "source.img");
+    string destinationPath = Path.Combine(directory, "destination.img");
+    Directory.CreateDirectory(directory);
+    try
+    {
+        byte[] bytes = new byte[5 * 1024 * 1024 + 733];
+        for (int index = 0; index < bytes.Length; index++) bytes[index] = unchecked((byte)(index * 17 + 3));
+        File.WriteAllBytes(sourcePath, bytes);
+        using (var source = new FileStream(sourcePath, FileMode.Open, FileAccess.Read, FileShare.Read,
+                   1024 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan))
+        using (var destination = new FileStream(destinationPath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None,
+                   1024 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan))
+        {
+            destination.SetLength(bytes.Length);
+            RawImageResult result = RawImageOperations.CopyAndVerifyAsync(source, destination, bytes.Length)
+                .GetAwaiter().GetResult();
+            Assert(result.Sha256 == Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)),
+                "file-backed image SHA-256 mismatch");
+        }
+        Assert(File.ReadAllBytes(destinationPath).SequenceEqual(bytes),
+            "file-backed image destination differs from source");
+    }
+    finally
+    {
+        if (File.Exists(sourcePath)) File.Delete(sourcePath);
+        if (File.Exists(destinationPath)) File.Delete(destinationPath);
+        if (Directory.Exists(directory)) Directory.Delete(directory);
+    }
+}
+
+static void RawImageCopyCancellation()
+{
+    using var sameStream = new MemoryStream(new byte[4096], writable: true);
+    AssertThrows<ArgumentException>(() => RawImageOperations.CopyAndVerifyAsync(
+        sameStream, sameStream, sameStream.Length).GetAwaiter().GetResult());
+
+    using var source = new MemoryStream(new byte[4096], writable: false);
+    using var destination = new MemoryStream(new byte[4096], writable: true);
+    using var cancellation = new CancellationTokenSource();
+    cancellation.Cancel();
+    AssertThrows<OperationCanceledException>(() => RawImageOperations.CopyAndVerifyAsync(
+        source, destination, source.Length, cancellationToken: cancellation.Token).GetAwaiter().GetResult());
+    Assert(destination.ToArray().All(value => value == 0), "cancelled image copy changed its destination");
+}
+
 static void AssertThrows<T>(Action action) where T : Exception
 {
     try { action(); } catch (T) { return; }

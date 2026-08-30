@@ -1,36 +1,289 @@
 <Window x:Class="FatxBridge.Windows.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="FATX Bridge 0.2.0 Beta" Height="650" Width="920" MinHeight="500" MinWidth="700"
-        Background="#0E1116" Foreground="#EEF4F0" WindowStartupLocation="CenterScreen">
-  <Grid Margin="30">
-    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-    <DockPanel LastChildFill="False">
-      <StackPanel><TextBlock Text="FATX BRIDGE" FontSize="24" FontWeight="SemiBold"/><TextBlock Text="Free FATX drive access for Windows" Foreground="#9AA7A1" Margin="0,4,0,0"/></StackPanel>
-      <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-        <Button Content="Back" Click="Back_Click" IsEnabled="{Binding CanNavigateBack}" />
-        <Button Content="Refresh" Click="Refresh_Click" IsEnabled="{Binding IsNotBusy}" />
-      </StackPanel>
-    </DockPanel>
-    <Border Grid.Row="1" Margin="0,22,0,16" Padding="12" CornerRadius="6" Background="#171B22">
-      <TextBlock Text="{Binding Status}" Foreground="#B5C4BD" TextWrapping="Wrap" />
+        Title="FATX Bridge 0.3.0 Beta 1" Height="740" Width="1120"
+        MinHeight="620" MinWidth="880" WindowStartupLocation="CenterScreen"
+        Background="#26292D" Foreground="{StaticResource Ink}" FontFamily="Segoe UI">
+  <Grid>
+    <Grid.RowDefinitions>
+      <RowDefinition Height="76"/>
+      <RowDefinition Height="52"/>
+      <RowDefinition Height="*"/>
+      <RowDefinition Height="82"/>
+      <RowDefinition Height="32"/>
+    </Grid.RowDefinitions>
+
+    <!-- Console-style masthead -->
+    <Border Grid.Row="0" BorderBrush="#111315" BorderThickness="0,0,0,1">
+      <Border.Background>
+        <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+          <GradientStop Color="#17191C" Offset="0"/>
+          <GradientStop Color="#30343A" Offset="0.62"/>
+          <GradientStop Color="#1B1D20" Offset="1"/>
+        </LinearGradientBrush>
+      </Border.Background>
+      <Grid Margin="30,0,30,0">
+        <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+          <StackPanel VerticalAlignment="Center">
+            <TextBlock Text="FATX BRIDGE" Foreground="White" FontSize="24" FontWeight="Light"/>
+            <TextBlock Text="Xbox storage tools for Windows" Foreground="#AEB4B8" FontSize="12"/>
+          </StackPanel>
+        </StackPanel>
+        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+          <TextBlock Text="BETA 0.3" Foreground="#AEB4B8" FontSize="12" VerticalAlignment="Center"/>
+        </StackPanel>
+      </Grid>
     </Border>
-    <Grid Grid.Row="2">
-      <Grid x:Name="DrivePanel">
-        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-        <TextBlock Text="Detected Xbox drives and memory cards" FontSize="16" FontWeight="SemiBold" />
-        <ListBox Grid.Row="1" Margin="0,12,0,12" ItemsSource="{Binding Drives}" SelectedItem="{Binding SelectedDrive}" IsEnabled="{Binding IsNotBusy}" Background="#171B22" BorderThickness="0">
-          <ListBox.ItemTemplate><DataTemplate><Border Padding="16" Margin="4" Background="#202631" CornerRadius="5"><StackPanel>
-            <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" FontSize="15"/><TextBlock Text="{Binding Details}" Foreground="#A9B7B0" Margin="0,5,0,0"/>
-          </StackPanel></Border></DataTemplate></ListBox.ItemTemplate>
-        </ListBox>
-        <StackPanel Grid.Row="2" Orientation="Horizontal"><Button Content="Open Drive" Click="OpenDrive_Click" IsEnabled="{Binding CanOpen}"/><TextBlock Text="Only disks with a validated FATX partition are shown." VerticalAlignment="Center" Foreground="#89968F"/></StackPanel>
+
+    <!-- Peer tabs; Browse is revealed only after a source has been opened. -->
+    <Grid x:Name="BladeTabBar" Grid.Row="1" Margin="30,0,70,0">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition/><ColumnDefinition Width="Auto"/><ColumnDefinition/><ColumnDefinition/>
+      </Grid.ColumnDefinitions>
+      <Button x:Name="StorageBladeTab" Grid.Column="0" Content="STORAGE" Click="StorageBlade_Click"
+              Style="{StaticResource BladeTabButton}" Background="{StaticResource XboxGreen}" Tag="NavigationTab"/>
+      <Grid x:Name="BrowseTabHost" Grid.Column="1" Width="0" ClipToBounds="True" IsHitTestVisible="False">
+        <Button x:Name="BrowseBladeTab" Click="BrowseBlade_Click" Style="{StaticResource BladeTabButton}"
+                Background="{StaticResource BladeOrange}" Tag="NavigationTab" Opacity="0.72" HorizontalAlignment="Stretch">
+          <TextBlock x:Name="BrowseTabLabel" Text="BROWSE" Opacity="0"/>
+        </Button>
       </Grid>
-      <Grid x:Name="PartitionPanel" Visibility="Collapsed">
-        <Grid.ColumnDefinitions><ColumnDefinition Width="290"/><ColumnDefinition Width="16"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-        <StackPanel><TextBlock Text="FATX partitions" FontSize="16" FontWeight="SemiBold"/><ListBox Margin="0,12,0,0" ItemsSource="{Binding Partitions}" SelectedItem="{Binding SelectedPartition}" SelectionChanged="Partition_SelectionChanged" IsEnabled="{Binding IsNotBusy}" Background="#171B22" BorderThickness="0"><ListBox.ItemTemplate><DataTemplate><Border Padding="12" Margin="3" Background="#202631" CornerRadius="5"><StackPanel><TextBlock Text="{Binding Name}" FontWeight="SemiBold"/><TextBlock Text="{Binding Details}" Foreground="#A9B7B0" FontSize="12"/></StackPanel></Border></DataTemplate></ListBox.ItemTemplate></ListBox></StackPanel>
-        <StackPanel Grid.Column="2"><TextBlock Text="Root directory" FontSize="16" FontWeight="SemiBold"/><WrapPanel Margin="0,10,0,0"><Button Content="Mount read-only" Click="MountReadOnly_Click" IsEnabled="{Binding CanMount}"/><Button Content="Mount read/write (experimental)" Click="MountReadWrite_Click" IsEnabled="{Binding CanMountReadWrite}"/><Button Content="Open in Explorer" Click="OpenExplorer_Click" IsEnabled="{Binding IsMounted}"/><Button Content="Unmount" Click="Unmount_Click" IsEnabled="{Binding IsMounted}"/></WrapPanel><ListView Margin="0,12,0,0" ItemsSource="{Binding RootEntries}" Background="#171B22" BorderThickness="0"><ListView.View><GridView><GridViewColumn Header="Name" DisplayMemberBinding="{Binding Name}" Width="220"/><GridViewColumn Header="Type" DisplayMemberBinding="{Binding Type}" Width="90"/><GridViewColumn Header="Size" DisplayMemberBinding="{Binding Size}" Width="110"/></GridView></ListView.View></ListView></StackPanel>
+      <Button x:Name="ToolsBladeTab" Grid.Column="2" Content="TOOLS" Click="ToolsBlade_Click"
+              Style="{StaticResource BladeTabButton}" Background="{StaticResource BladeBlue}" Opacity="0.72" Tag="NavigationTab"/>
+      <Button x:Name="AboutBladeTab" Grid.Column="3" Content="ABOUT" Click="AboutBlade_Click"
+              Style="{StaticResource BladeTabButton}" Background="{StaticResource BladePurple}" Opacity="0.72" Tag="NavigationTab"/>
+    </Grid>
+
+    <!-- Layered colored edges keep the classic overlapping-tab silhouette. -->
+    <Grid Grid.Row="2" HorizontalAlignment="Right" Width="72" Margin="0,10,12,10" IsHitTestVisible="False">
+      <Border Width="58" HorizontalAlignment="Right" Margin="0,0,0,0" CornerRadius="0,20,20,0" Background="{StaticResource BladePurple}"/>
+      <Border Width="46" HorizontalAlignment="Right" Margin="0,8,8,8" CornerRadius="0,18,18,0" Background="{StaticResource BladeBlue}"/>
+      <Border Width="34" HorizontalAlignment="Right" Margin="0,16,16,16" CornerRadius="0,16,16,0" Background="{StaticResource BladeOrange}"/>
+      <Border Width="22" HorizontalAlignment="Right" Margin="0,24,24,24" CornerRadius="0,14,14,0" Background="{StaticResource XboxGreen}"/>
+    </Grid>
+
+    <Border Grid.Row="2" Margin="30,0,70,0" Background="{StaticResource BladeChrome}"
+            BorderBrush="#FFFFFF" BorderThickness="1" CornerRadius="0,0,20,0">
+      <Grid Margin="24,18,30,18">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+        <Grid>
+          <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+          <StackPanel>
+            <TextBlock x:Name="BladeHeading" Text="STORAGE" FontSize="27" FontWeight="Light" Foreground="{StaticResource Ink}"/>
+            <TextBlock x:Name="BladeIntro" Text="Choose a detected Xbox drive, memory unit, or previously opened image."
+                       Foreground="{StaticResource MutedInk}" Margin="0,3,0,14" TextWrapping="Wrap"/>
+          </StackPanel>
+          <Border Grid.Column="1" Background="#D8DADC" CornerRadius="12" Padding="11,5" VerticalAlignment="Top">
+            <TextBlock x:Name="BladePosition" Text="1 / 3" Foreground="{StaticResource MutedInk}" FontWeight="SemiBold"/>
+          </Border>
+        </Grid>
+
+        <Grid Grid.Row="1">
+          <!-- STORAGE: the default, low-risk path -->
+          <Grid x:Name="DrivePanel">
+            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+            <DockPanel LastChildFill="True" Margin="0,0,0,12">
+              <Button DockPanel.Dock="Right" Content="REFRESH DEVICES" Click="Refresh_Click" IsEnabled="{Binding IsNotBusy}" Style="{StaticResource PrimaryActionButton}" Margin="12,0,0,0"/>
+              <StackPanel>
+                <TextBlock Text="Available storage" FontSize="18" FontWeight="SemiBold"/>
+                <TextBlock Text="Only sources with a validated FATX layout appear here." Foreground="{StaticResource MutedInk}"/>
+              </StackPanel>
+            </DockPanel>
+            <ListBox Grid.Row="1" ItemsSource="{Binding Drives}" SelectedItem="{Binding SelectedDrive}"
+                     IsEnabled="{Binding IsNotBusy}" Background="Transparent" BorderThickness="0" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+              <ListBox.ItemTemplate>
+                <DataTemplate>
+                  <Border Padding="16" Background="Transparent" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="4">
+                    <Grid>
+                      <Grid.ColumnDefinitions><ColumnDefinition Width="8"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                      <Border Background="{StaticResource XboxGreen}" CornerRadius="3" Margin="0,0,13,0"/>
+                      <StackPanel Grid.Column="1">
+                        <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" FontSize="16"/>
+                        <TextBlock Text="{Binding Details}" Foreground="{StaticResource MutedInk}" Margin="0,5,0,0" TextWrapping="Wrap"/>
+                      </StackPanel>
+                      <TextBlock Grid.Column="2" Text="›" FontSize="30" Foreground="#9AA0A5" VerticalAlignment="Center" Margin="18,0,4,0"/>
+                    </Grid>
+                  </Border>
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+            <Border Grid.Row="2" Background="#DDE6D3" BorderBrush="#B7C9A4" BorderThickness="1" Padding="14" Margin="0,12,0,0" CornerRadius="4">
+              <DockPanel>
+                <Button DockPanel.Dock="Right" Content="OPEN SELECTED" Click="OpenDrive_Click" IsEnabled="{Binding CanOpen}" Style="{StaticResource PrimaryActionButton}" Margin="14,0,0,0"/>
+                <StackPanel VerticalAlignment="Center">
+                  <TextBlock Text="Opening a source is read-only until you explicitly choose a mount mode." FontWeight="SemiBold"/>
+                  <TextBlock Text="Images and legacy USB containers are added from the Tools tab." Foreground="{StaticResource MutedInk}"/>
+                </StackPanel>
+              </DockPanel>
+            </Border>
+          </Grid>
+
+          <!-- BROWSE: contextual controls only after a source has been opened -->
+          <Grid x:Name="PartitionPanel" Visibility="Collapsed">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="300"/><ColumnDefinition Width="18"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <StackPanel>
+              <TextBlock Text="Validated partitions" FontSize="18" FontWeight="SemiBold"/>
+              <TextBlock Text="Pick one partition to inspect or mount." Foreground="{StaticResource MutedInk}" Margin="0,2,0,10"/>
+              <ListBox ItemsSource="{Binding Partitions}" SelectedItem="{Binding SelectedPartition}" SelectionChanged="Partition_SelectionChanged"
+                       IsEnabled="{Binding IsNotBusy}" Background="Transparent" BorderThickness="0">
+                <ListBox.ItemTemplate><DataTemplate>
+                  <Border Padding="12" Background="Transparent" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="4">
+                    <StackPanel><TextBlock Text="{Binding Name}" FontWeight="SemiBold"/><TextBlock Text="{Binding Details}" Foreground="{StaticResource MutedInk}" FontSize="11" TextWrapping="Wrap" Margin="0,4,0,0"/></StackPanel>
+                  </Border>
+                </DataTemplate></ListBox.ItemTemplate>
+              </ListBox>
+            </StackPanel>
+
+            <Grid Grid.Column="2">
+              <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+              <DockPanel LastChildFill="True">
+                <StackPanel>
+                  <TextBlock Text="Partition contents" FontSize="18" FontWeight="SemiBold"/>
+                  <TextBlock Text="Explorer access and advanced inspection apply only to this selected partition." Foreground="{StaticResource MutedInk}"/>
+                </StackPanel>
+              </DockPanel>
+              <StackPanel Grid.Row="1" Margin="0,12,0,10">
+                <WrapPanel>
+                  <Button Content="MOUNT READ-ONLY" Click="MountReadOnly_Click" IsEnabled="{Binding CanMount}" Style="{StaticResource PrimaryActionButton}"/>
+                  <Button Content="MOUNT READ/WRITE…" Click="MountReadWrite_Click" IsEnabled="{Binding CanMountReadWrite}"/>
+                  <Button Content="OPEN IN EXPLORER" Click="OpenExplorer_Click" IsEnabled="{Binding IsMounted}"/>
+                  <Button Content="UNMOUNT" Click="Unmount_Click" IsEnabled="{Binding IsMounted}"/>
+                </WrapPanel>
+                <WrapPanel Margin="0,8,0,0">
+                  <Button Content="SECTOR VIEWER…" Click="SectorViewer_Click" IsEnabled="{Binding CanUsePartitionTools}"/>
+                  <Button Content="RECOVER DELETED…" Click="RecoverDeleted_Click" IsEnabled="{Binding CanUsePartitionTools}"/>
+                  <Button Content="CONTENT METADATA…" Click="ContentMetadata_Click" IsEnabled="{Binding CanUsePartitionTools}"/>
+                </WrapPanel>
+                <DockPanel Margin="0,10,0,0" LastChildFill="True">
+                  <TextBlock Text="Explorer name" VerticalAlignment="Center" Foreground="{StaticResource MutedInk}" Margin="0,0,10,0"/>
+                  <TextBox Text="{Binding VolumeLabel, UpdateSourceTrigger=PropertyChanged}" MaxLength="32" IsEnabled="{Binding CanEditVolumeLabel}"
+                           Padding="8,5" Background="White" Foreground="{StaticResource Ink}" BorderBrush="{StaticResource Line}"/>
+                </DockPanel>
+              </StackPanel>
+              <ListView Grid.Row="2" ItemsSource="{Binding RootEntries}" Background="White" BorderBrush="{StaticResource Line}" BorderThickness="1">
+                <ListView.View><GridView><GridViewColumn Header="Name" DisplayMemberBinding="{Binding Name}" Width="260"/><GridViewColumn Header="Type" DisplayMemberBinding="{Binding Type}" Width="100"/><GridViewColumn Header="Size" DisplayMemberBinding="{Binding Size}" Width="130"/></GridView></ListView.View>
+              </ListView>
+            </Grid>
+          </Grid>
+
+          <!-- TOOLS: uncommon sources and operations are explained before use -->
+          <ScrollViewer x:Name="ToolsPanel" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+              <Border Background="#D9E8F1" BorderBrush="#A9C9DB" BorderThickness="1" CornerRadius="4" Padding="12" Margin="0,0,0,14">
+                <TextBlock Text="Nothing on this tab runs automatically. Choose a tool only when you recognize the source or operation." TextWrapping="Wrap" FontWeight="SemiBold" Foreground="#244E67"/>
+              </Border>
+              <Grid>
+                <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0">
+                  <Border Style="{StaticResource ToolCard}">
+                    <StackPanel>
+                      <TextBlock Text="DISK IMAGES" Foreground="{StaticResource BladeBlue}" FontWeight="Bold" FontSize="12"/>
+                      <TextBlock Text="Open an existing image" FontSize="18" FontWeight="SemiBold" Margin="0,6,0,2"/>
+                      <TextBlock Text="Adds an .img, .bin, or .fatx file to Storage after validating its FATX layout. Opening does not format it." Foreground="{StaticResource MutedInk}" TextWrapping="Wrap" Margin="0,0,0,12"/>
+                      <Button Content="OPEN IMAGE…" Click="OpenImage_Click" IsEnabled="{Binding IsNotBusy}" HorizontalAlignment="Left"/>
+                      <Separator Margin="0,14,0,12"/>
+                      <TextBlock Text="Create a new FATX image" FontSize="18" FontWeight="SemiBold"/>
+                      <TextBlock Text="SAFE SCOPE: creates a new normal Windows image file only. It cannot select or format a physical disk." Foreground="{StaticResource XboxGreenDark}" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,3,0,12"/>
+                      <Button Content="CREATE NEW IMAGE…" Click="CreateFatxImage_Click" IsEnabled="{Binding IsNotBusy}" Style="{StaticResource PrimaryActionButton}" HorizontalAlignment="Left"/>
+                    </StackPanel>
+                  </Border>
+
+                  <Border Style="{StaticResource ToolCard}">
+                    <StackPanel>
+                      <TextBlock Text="LEGACY XBOX 360 USB" Foreground="{StaticResource BladeBlue}" FontWeight="Bold" FontSize="12"/>
+                      <TextBlock Text="Open a Data0000 container" FontSize="18" FontWeight="SemiBold" Margin="0,6,0,2"/>
+                      <TextBlock Text="Selects Data0000 and joins the matching Data files as one read-only source. Container writing and Explorer mounting are disabled." Foreground="{StaticResource MutedInk}" TextWrapping="Wrap" Margin="0,0,0,12"/>
+                      <Button Content="OPEN DATA0000 READ-ONLY…" Click="OpenDataContainer_Click" IsEnabled="{Binding IsNotBusy}" HorizontalAlignment="Left"/>
+                    </StackPanel>
+                  </Border>
+                </StackPanel>
+
+                <StackPanel Grid.Column="1">
+                  <Border Style="{StaticResource ToolCard}">
+                    <StackPanel>
+                      <TextBlock Text="PHYSICAL DRIVE IMAGING" Foreground="{StaticResource BladeOrange}" FontWeight="Bold" FontSize="12"/>
+                      <TextBlock Text="Back up the selected drive" FontSize="18" FontWeight="SemiBold" Margin="0,6,0,2"/>
+                      <TextBlock Text="Copies every byte from the physical device to an image and verifies it with SHA-256 before publishing." Foreground="{StaticResource MutedInk}" TextWrapping="Wrap" Margin="0,0,0,12"/>
+                      <Button Content="BACK UP SELECTED DRIVE…" Click="BackupDrive_Click" IsEnabled="{Binding CanBackup}" HorizontalAlignment="Left"/>
+                      <Separator Margin="0,14,0,12"/>
+                      <TextBlock Text="Restore an image to the selected drive" FontSize="18" FontWeight="SemiBold" Foreground="#8D3027"/>
+                      <TextBlock Text="DANGER: overwrites the complete selected physical device. Exact capacity and typed target confirmation are required." Foreground="#8D3027" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,3,0,12"/>
+                      <Button Content="RESTORE TO SELECTED DRIVE…" Click="RestoreImage_Click" IsEnabled="{Binding CanRestore}" Style="{StaticResource DangerActionButton}" HorizontalAlignment="Left"/>
+                    </StackPanel>
+                  </Border>
+
+                  <Border Style="{StaticResource ToolCard}">
+                    <StackPanel>
+                      <TextBlock Text="HELP &amp; DIAGNOSTICS" Foreground="{StaticResource BladePurple}" FontWeight="Bold" FontSize="12"/>
+                      <TextBlock Text="Create a support package" FontSize="18" FontWeight="SemiBold" Margin="0,6,0,2"/>
+                      <TextBlock Text="Saves a local ZIP containing only allowlisted troubleshooting logs with common paths and identifiers redacted. Nothing is uploaded." Foreground="{StaticResource MutedInk}" TextWrapping="Wrap" Margin="0,0,0,12"/>
+                      <Button Content="EXPORT SUPPORT ZIP…" Click="SupportPackage_Click" IsEnabled="{Binding IsNotBusy}" HorizontalAlignment="Left"/>
+                    </StackPanel>
+                  </Border>
+                </StackPanel>
+              </Grid>
+
+            </StackPanel>
+          </ScrollViewer>
+
+          <!-- ABOUT: explanation instead of another pile of commands -->
+          <ScrollViewer x:Name="AboutPanel" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
+            <Grid>
+              <Grid.ColumnDefinitions><ColumnDefinition Width="2*"/><ColumnDefinition Width="3*"/></Grid.ColumnDefinitions>
+              <StackPanel Margin="0,0,30,0">
+                <TextBlock Text="FATX Bridge" FontSize="30" FontWeight="Light" Margin="0,0,0,2"/>
+                <TextBlock Text="Free FATX drive access for Windows" Foreground="{StaticResource MutedInk}"/>
+              </StackPanel>
+              <StackPanel Grid.Column="1">
+                <TextBlock Text="Designed for understandable storage access" FontSize="22" FontWeight="SemiBold"/>
+                <TextBlock Margin="0,8,0,18" TextWrapping="Wrap" Foreground="{StaticResource MutedInk}">
+                  FATX Bridge detects and browses supported Xbox and Xbox 360 FATX storage. Read-only access is the default. Write mounting, physical restore, recovery, and raw inspection stay behind contextual actions with clear scope.
+                </TextBlock>
+                <Border Style="{StaticResource ToolCard}">
+                  <StackPanel>
+                    <TextBlock Text="PRIVACY" FontWeight="Bold" Foreground="{StaticResource BladePurple}"/>
+                    <TextBlock Text="No analytics, advertising, telemetry, or update checks. Support packages are created locally and never uploaded by the app." TextWrapping="Wrap" Margin="0,5,0,0"/>
+                  </StackPanel>
+                </Border>
+                <Border Style="{StaticResource ToolCard}">
+                  <StackPanel>
+                    <TextBlock Text="SAFETY MODEL" FontWeight="Bold" Foreground="{StaticResource BladeOrange}"/>
+                    <TextBlock Text="Only validated FATX partitions are listed. Securityless BadStorage disks are supported. Physical formatting is not exposed." TextWrapping="Wrap" Margin="0,5,0,0"/>
+                  </StackPanel>
+                </Border>
+                <Border Style="{StaticResource ToolCard}">
+                  <StackPanel>
+                    <TextBlock Text="SOUND" FontWeight="Bold" Foreground="{StaticResource XboxGreenDark}"/>
+                    <CheckBox Content="Enable interface sounds" IsChecked="{Binding SoundsEnabled, Mode=TwoWay}"
+                              Margin="0,8,0,0" FontWeight="SemiBold"/>
+                    <TextBlock Text="This preference is saved locally and applies to tab navigation and button clicks." Foreground="{StaticResource MutedInk}" TextWrapping="Wrap" Margin="0,5,0,0"/>
+                  </StackPanel>
+                </Border>
+              </StackPanel>
+            </Grid>
+          </ScrollViewer>
+        </Grid>
       </Grid>
+    </Border>
+
+    <!-- Persistent status behaves like the dashboard's bottom information strip. -->
+    <Border Grid.Row="3" Background="#17191C" BorderBrush="#3B3F43" BorderThickness="0,1,0,0" Padding="30,12">
+      <Grid>
+        <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <DockPanel>
+          <TextBlock DockPanel.Dock="Left" Text="STATUS" Foreground="{StaticResource XboxGreen}" FontWeight="Bold" Margin="0,0,16,0"/>
+          <TextBlock Text="{Binding Status}" Foreground="#E4E7E9" TextWrapping="Wrap"/>
+        </DockPanel>
+        <DockPanel Grid.Row="1" Margin="0,8,0,0" Visibility="{Binding TransferVisibility}">
+          <Button DockPanel.Dock="Right" Content="CANCEL" Click="CancelTransfer_Click" IsEnabled="{Binding CanCancelTransfer}" Margin="12,0,0,0" Padding="10,4"/>
+          <ProgressBar Height="12" Minimum="0" Maximum="100" Value="{Binding TransferProgress, Mode=OneWay}" Foreground="{StaticResource XboxGreen}"/>
+        </DockPanel>
+      </Grid>
+    </Border>
+
+    <Grid Grid.Row="4" Background="#0F1012" Margin="0">
+      <TextBlock Text="FATX BRIDGE" Foreground="#656B70" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,30,0" FontSize="11"/>
     </Grid>
   </Grid>
 </Window>

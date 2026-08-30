@@ -1,112 +1,83 @@
-# FATX Bridge 0.2.0 Beta 3
+# FATX Bridge 0.3.0 Beta 1
 
-**Free FATX drive access for Windows.**
+**A free and open-source way to use Xbox FATX drives on Windows.**
 
 [![Build and test](https://github.com/Lomzlomz/fatx-bridge/actions/workflows/build.yml/badge.svg)](https://github.com/Lomzlomz/fatx-bridge/actions/workflows/build.yml)
 [![Release](https://img.shields.io/github/v/release/Lomzlomz/fatx-bridge?include_prereleases)](https://github.com/Lomzlomz/fatx-bridge/releases)
 [![License](https://img.shields.io/github/license/Lomzlomz/fatx-bridge)](LICENSE)
 
-FATX Bridge is a free Windows utility for accessing original Xbox and Xbox 360 FATX storage. It detects supported physical disks and memory units, validates their FATX layouts, browses files inside the app, and mounts a selected partition in File Explorer through WinFsp.
+FATX Bridge lets you connect a supported original Xbox or Xbox 360 drive to your PC, browse it, and open it in File Explorer. It is free, contains no ads or telemetry, and does not need a paid license.
 
-## Install FATX Bridge
+## Download and install
 
-### Recommended: Windows installer
+1. Open the [0.3.0 Beta 1 release](https://github.com/Lomzlomz/fatx-bridge/releases/tag/v0.3.0-beta.1).
+2. Download and run `FATXBridge-0.3.0-beta.1-Setup.exe`.
+3. Open **FATX Bridge** from the Start menu.
 
-1. Open the [FATX Bridge 0.2.0 Beta 3 release](https://github.com/Lomzlomz/fatx-bridge/releases/tag/v0.2.0-beta.3).
-2. Download `FATXBridge-0.2.0-beta.3-Setup.exe`.
-3. Run the installer and approve the Windows administrator prompt.
-4. Leave **Launch FATX Bridge** selected, or open it later by searching for **FATX Bridge** in the Start menu.
+That is all most people need. The installer includes the app and installs the required WinFsp driver automatically. You do not need to install .NET, Visual Studio, or any developer tools.
 
-The installer contains the self-contained .NET application and installs the signed WinFsp 2.1 Core runtime when WinFsp is not already present. You do not need Visual Studio, the .NET SDK, or a separate .NET download. Uninstalling FATX Bridge does not remove WinFsp because other filesystem applications may use the same driver.
+Windows may show an **Unknown publisher** warning because this beta is not code-signed yet. Only install builds downloaded from this repository, and compare the file with the included SHA-256 checksum if you are unsure.
 
-The beta installer is not code-signed yet, so Windows SmartScreen may identify it as an unknown publisher. Only continue if it came from this repository's Releases page and its SHA-256 matches the value published with the release.
+Prefer not to use an installer? The release also includes a portable ZIP. Portable users must install [WinFsp 2.1](https://github.com/winfsp/winfsp/releases/download/v2.1/winfsp-2.1.25156.msi) separately. See the [full installation guide](docs/INSTALL.md) if you need help.
 
-### Portable installation
+## Using a drive
 
-1. Install the stable [WinFsp 2.1 MSI](https://github.com/winfsp/winfsp/releases/download/v2.1/winfsp-2.1.25156.msi) with its default **Core** feature.
-2. Download `FATXBridge-0.2.0-beta.3-win-x64-portable.zip` from the [release](https://github.com/Lomzlomz/fatx-bridge/releases/tag/v0.2.0-beta.3).
-3. Right-click the ZIP, select **Extract All**, and run `FatxBridge.exe` from the extracted folder.
+1. Shut down the Xbox and connect its drive or memory unit to the PC.
+2. Start FATX Bridge and approve the administrator prompt.
+3. Select the detected storage device and open it.
+4. Choose a partition, then mount it in File Explorer.
 
-The portable build also includes .NET, but it cannot mount a drive until the signed WinFsp driver is installed. See [docs/INSTALL.md](docs/INSTALL.md) for troubleshooting and manual verification.
+Start with a **read-only** mount. Make a backup before enabling read/write mode, restoring an image, or experimenting with important data.
 
-### First use
+## What it can do
 
-1. Shut down the console and connect its FATX disk or memory unit to the PC through a compatible direct connection, USB-to-SATA adapter, or memory-unit reader.
-2. Open FATX Bridge from the Start menu and approve the administrator prompt used by its narrowly scoped physical-drive helper.
-3. Select the detected device and desired FATX partition.
-4. Choose a read-only mount first. Use experimental read/write mode only after making a backup.
+- Browse and mount Xbox 360 hard drives.
+- Browse and mount unlocked original Xbox hard drives and memory units.
+- Work with many compatible USB-to-SATA adapters and memory-unit readers.
+- Copy, create, rename, and delete files through File Explorer in read/write mode.
+- Back up a complete physical drive and verify the copy.
+- Restore an exact-size backup with clear confirmation and verification.
+- Open disk images and create new FATX image files.
+- Browse old Xbox 360 `Data0000` USB storage read-only.
+- Show game/package information, inspect disk sectors read-only, and recover some recently deleted files.
+- Remember custom names for mounted volumes.
+- Work with Xbox 360 disks that do not have a security sector.
 
-## Features
+The app keeps destructive tools away from the startup screen and explains their effect before use. It never formats a physical drive.
 
-- Detects supported Xbox 360 hard drives, including drives connected through compatible USB-to-SATA adapters.
-- Detects unlocked original Xbox hard drives with fixed retail layouts, XBPartitioner tables, or legacy extended partitions.
-- Detects original Xbox memory units exposed to Windows as whole physical storage devices, including their 4 KiB FATX logical-sector geometry.
-- Validates FATX structures before presenting a disk.
-- Browses nested FATX directories without mounting.
-- Mounts a validated writable partition read-only or read/write in File Explorer.
-- Supports file and directory creation, reads, writes, truncation, rename, and deletion.
-- Uses buffered, bounded writes designed for practical large-file transfer speeds.
-- Makes no network requests and includes no telemetry.
+## Original Xbox note
 
-## System requirements
+Original Xbox hard drives must already be unlocked before Windows can read them. FATX Bridge does not unlock drives or use `eeprom.bin`. Memory units need a compatible reader that makes them appear as a normal Windows storage device.
 
-- Windows 10 or later, 64-bit.
-- The signed [WinFsp](https://github.com/winfsp/winfsp) Core runtime. The recommended installer handles this automatically.
-- Administrator approval when opening a protected physical disk. The mounted File Explorer view runs in the desktop user's session.
+## Larger Xbox 360 drives
 
-Original Xbox hard drives must already be ATA-unlocked before Windows can read their FATX partitions. FATX Bridge does not derive HDD passwords, consume `eeprom.bin`, or issue ATA security commands. Original Xbox memory units require a compatible USB adapter or reader that exposes the card as a Windows physical disk.
+Users running the Bad Update exploit can optionally use the independent [BadStorage fork](https://github.com/Angelpro09xd/BadStorage) to let an Xbox 360 format larger drives without normal security-sector metadata. After the console formats the drive, shut it down and connect the drive to FATX Bridge.
 
-The published installer and portable package are self-contained and do not require a separate .NET installation. Building from source requires the .NET 10 SDK.
+BadStorage is a separate project with its own requirements and risks. FATX Bridge does not install or support Bad Update, XeUnshackle, or BadStorage. Back up existing data first.
 
-## Large internal drives with BadStorage
+## Help and safety
 
-Advanced users running the Xbox 360 **Bad Update** exploit may be interested in [Angelpro09xd/BadStorage](https://github.com/Angelpro09xd/BadStorage), a third-party fork that adds support for disks that never passed the console's security-sector check. Its project page advertises support for up to 2 TB and reports testing from a 240 GB SSD through a 1 TB hard disk.
+- [Installation and troubleshooting](docs/INSTALL.md)
+- [Safe-use guide](docs/SAFETY.md)
+- [Privacy](PRIVACY.md)
+- [All documentation](docs/)
+- [Report a bug](https://github.com/Lomzlomz/fatx-bridge/issues)
 
-The fork requires a retail Xbox 360 on kernel 17559 with Bad Update and XeUnshackle. Follow its instructions exactly. Its README says holding LT can reformat the disk from the console; after the console creates the FATX layout, shut it down fully, connect the disk to the PC, and open it with FATX Bridge. A normally structured Xbox 360 FATX disk should then be detectable without HDD Maker or SSD Maker metadata.
+FATX is an old filesystem without modern crash protection. Always unmount cleanly and never disconnect a drive while files are being written.
 
-Important limitations from the BadStorage project:
+## Building from source
 
-- Its in-memory changes must be applied again after a cold reboot or shutdown.
-- An unauthenticated internal disk cannot itself provide an exploit entry point that needs to read from that disk before the bypass runs; USB-based entry points are unaffected.
-- FATX Bridge does not install, modify, or provide support for Bad Update, XeUnshackle, or BadStorage.
-- Back up existing data before formatting or experimenting with an internal disk.
-
-BadStorage is an independent project and is not maintained or endorsed by FATX Bridge.
-
-## Build and verify
+Developers need the .NET 10 SDK:
 
 ```powershell
 dotnet build .\FatxBridge.sln -c Release
 dotnet run --project .\tests\FatxBridge.Tests\FatxBridge.Tests.csproj -c Release
-Start-Process .\app\bin\Release\net10.0-windows\FatxBridge.exe -Verb RunAs
 ```
 
-To build the self-contained portable package and installer, install Inno Setup 6 or 7 and run:
+Run `build\Build-Release.ps1` with Inno Setup installed to create the self-contained portable ZIP and Windows installer.
 
-```powershell
-.\build\Build-Release.ps1
-```
+## License
 
-The automated tests use disposable synthetic streams. The broker and mount probes create temporary FATX images and do not open a physical disk for writing.
+FATX Bridge is available under the [MIT License](LICENSE). Third-party notices are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-## Safety
-
-Physical disks and mounts are read-only unless the user explicitly selects the experimental read/write mode and accepts its warning. A disk is shown only after FATX headers, media markers, allocation structures, partition boundaries, and the root directory chain pass validation.
-
-FATX is not journaled. Although FATX Bridge orders allocation, data, FAT links, and directory metadata to reduce inconsistent states, no application can make an unexpected disconnect or power loss crash-atomic. Keep a backup, unmount cleanly, and never disconnect a disk during a write. See [docs/SAFETY.md](docs/SAFETY.md).
-
-## Current scope
-
-The detector supports standard retail Xbox 360 HDD layouts, unlocked original Xbox fixed HDD layouts, bounded active entries in the 14-slot XBPartitioner table, legacy F/G locations, and whole-device original Xbox memory units. Formatting, ATA/security-sector unlocking, disk imaging, data recovery, Xbox 360 `Data0000` USB containers, and STFS package management are not part of this beta.
-
-## Privacy and diagnostics
-
-FATX Bridge has no network telemetry. Diagnostic files are stored locally under `%LOCALAPPDATA%\FatxBridge`. Detailed callback logging is enabled only when `FATXBRIDGE_WINFSP_DEBUG=1`; local write-performance logging is enabled only when `FATXBRIDGE_PERFORMANCE_LOG=1`. See [PRIVACY.md](PRIVACY.md).
-
-## License and acknowledgements
-
-FATX Bridge is released under the [MIT License](LICENSE). It uses WinFsp through the `winfsp.net` package; WinFsp has its own GPLv3 terms and Free/Libre and Open Source Software exception. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) before redistributing binaries.
-
-The FATX behavior and device layouts were independently implemented using public Xbox format documentation plus [emoose/xbox-winfsp](https://github.com/emoose/xbox-winfsp), [aerosoul94/FATXTools](https://github.com/aerosoul94/FATXTools), and [mborgerson/fatx](https://github.com/mborgerson/fatx) as design references. Their source was not copied; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for licenses and links.
-
-FATX Bridge is an independent community project. It is not affiliated with, endorsed by, or sponsored by Microsoft, Xbox, FATXplorer, Eaton Works, WinFsp, or their respective owners. Product names and trademarks belong to their owners.
+FATX Bridge is an independent community project. It is not affiliated with or endorsed by Microsoft, Xbox, FATXplorer, Eaton Works, or WinFsp.
