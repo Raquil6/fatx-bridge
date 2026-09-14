@@ -170,6 +170,7 @@ public sealed class FatxWinFspFileSystem(FatxVolume volume, bool readOnly, strin
         }
     }
 
+    private int freeSpaceScanStarted;
     public override int GetVolumeInfo(out VolumeInfo volumeInfo)
     {
         // This callback is part of Windows' first probe after mounting. Do not scan
@@ -177,7 +178,17 @@ public sealed class FatxWinFspFileSystem(FatxVolume volume, bool readOnly, strin
         // block the dispatcher long enough for Explorer to reject the drive.
         volumeInfo = new VolumeInfo { TotalSize = (ulong)volume.TotalSize, FreeSize = (ulong)volume.ReportedFreeSpace };
         volumeInfo.SetVolumeLabel(volumeLabel);
+        EnsureFreeSpaceScanStarted();
         return Success;
+    }
+    private void EnsureFreeSpaceScanStarted()
+    {
+        if (Interlocked.CompareExchange(ref freeSpaceScanStarted, 1, 0) != 0) return;
+        _ = Task.Run(() =>
+        {
+            try { _ = volume.FreeSpace; }
+            catch { Interlocked.Exchange(ref freeSpaceScanStarted, 0); }
+        });
     }
     public override int SetVolumeLabel(string VolumeLabel, out VolumeInfo volumeInfo)
     {
