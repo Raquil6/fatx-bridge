@@ -20,6 +20,7 @@ public sealed class FatxVolume
     private readonly Stream source;
     private readonly object mutationGate = new();
     private readonly Dictionary<uint, List<uint>> chainCache = [];
+    private readonly Dictionary<uint, List<Slot>> directorySlotCache = [];
     private byte[]? fatPage;
     private long fatPageOffset = -1;
     private bool fatPageDirty;
@@ -92,7 +93,7 @@ public sealed class FatxVolume
     }
 
     public IReadOnlyList<FatxDirectoryEntry> ListRootDirectory() => EnumerateDirectory("/");
-    public IReadOnlyList<FatxDirectoryEntry> EnumerateDirectory(string path) { lock (mutationGate) return ReadDirectory(ResolveDirectory(path)).Where(s => !s.Deleted && !s.Empty).Select(s => s.Entry!).ToArray(); }
+    public IReadOnlyList<FatxDirectoryEntry> EnumerateDirectory(string path) { lock (mutationGate) return GetCachedDirectorySlots(ResolveDirectory(path)).Where(s => !s.Deleted && !s.Empty).Select(s => s.Entry!).ToArray(); }
 
     /// <summary>
     /// Enumerates deleted 0xE5 directory slots in the root or a currently live
@@ -280,7 +281,7 @@ public sealed class FatxVolume
     }
     private void Delete(string path, bool directory)
     {
-        lock (mutationGate) { EnsureWritable(); string p = CanonicalPath(path); if (p == "/") throw new IOException("The FATX root cannot be deleted."); Slot slot = FindEntry(p) ?? throw new FileNotFoundException("The FATX path does not exist.", path); if (slot.Entry!.IsDirectory != directory) throw new IOException(directory ? "The path is not a directory." : "The path is not a file."); if (directory && ReadDirectory(slot.Entry.FirstCluster).Any(s => !s.Deleted && !s.Empty)) throw new IOException("A non-empty FATX directory cannot be deleted."); DeleteSlot(slot.Position); source.Flush(); FreeChain(slot.Entry.FirstCluster); FlushFatPage(); source.Flush(); }
+        lock (mutationGate) { EnsureWritable(); string p = CanonicalPath(path); if (p == "/") throw new IOException("The FATX root cannot be deleted."); Slot slot = FindEntry(p) ?? throw new FileNotFoundException("The FATX path does not exist.", path); if (slot.Entry!.IsDirectory != directory) throw new IOException(directory ? "The path is not a directory." : "The path is not a file."); if (directory && GetCachedDirectorySlots(slot.Entry.FirstCluster).Any(s => !s.Deleted && !s.Empty)) throw new IOException("A non-empty FATX directory cannot be deleted."); DeleteSlot(slot.Position); source.Flush(); FreeChain(slot.Entry.FirstCluster); FlushFatPage(); source.Flush(); }
     }
     private FatxDirectoryEntry ExtendFile(Slot slot, uint length)
     {
@@ -330,10 +331,20 @@ public sealed class FatxVolume
         return null;
     }
     private (uint Directory, string Name) Parent(string p) { int slash = p.LastIndexOf('/'); return (ResolveDirectory(slash == 0 ? "/" : p[..slash]), p[(slash + 1)..]); }
-    private Slot? FindInDirectory(uint directory, string name) => ReadDirectory(directory).FirstOrDefault(s => !s.Deleted && !s.Empty && string.Equals(s.Entry!.Name, name, StringComparison.OrdinalIgnoreCase));
+    private Slot? FindInDirectory(uint directory, string name) => GetCachedDirectorySlots(directory).FirstOrDefault(s => !s.Deleted && !s.Empty && string.Equals(s.Entry!.Name, name, StringComparison.OrdinalIgnoreCase));
     private Slot FindFreeSlot(uint directory)
     {
-        Slot? free = ReadDirectory(directory).FirstOrDefault(s => s.Deleted || s.Empty); if (free is not null) return free; List<uint> chain = GetChain(directory); uint tail = chain[^1], extension = AllocateClusters(1)[0]; ZeroCluster(extension); source.Flush(); WriteFat(extension, Last); FlushFatPage(); source.Flush(); WriteFat(tail, extension); FlushFatPage(); source.Flush(); chain.Add(extension); return new Slot(ClusterOffset(extension), null, false, true);
+        Slot? free = GetCachedDirectorySlots(directory).FirstOrDefault(s => s.Deleted || s.Empty); if (free is not null) return free;
+        List<uint> chain = GetChain(directory); uint tail = chain[^1], extension = AllocateClusters(1)[0]; ZeroCluster(extension); source.Flush(); WriteFat(extension, Last); FlushFatPage(); source.Flush(); WriteFat(tail, extension); FlushFatPage(); source.Flush(); chain.Add(extension);
+        directorySlotCache.Remove(directory);
+        return new Slot(ClusterOffset(extension), null, false, true);
+    }
+    private List<Slot> GetCachedDirectorySlots(uint first)
+    {
+        if (directorySlotCache.TryGetValue(first, out List<Slot>? cached)) return cached;
+        List<Slot> slots = ReadDirectory(first).ToList();
+        directorySlotCache[first] = slots;
+        return slots;
     }
     private IEnumerable<Slot> ReadDirectory(uint first)
     {
@@ -610,8 +621,28 @@ public sealed class FatxVolume
 
     private FatxDirectoryEntry Parse(ReadOnlySpan<byte> b) => new(Ascii.GetString(b.Slice(2, b[0])), b[1], U32(b.Slice(0x2C, 4), Metadata.ByteOrder), U32(b.Slice(0x30, 4), Metadata.ByteOrder), U32(b.Slice(0x34, 4), Metadata.ByteOrder), U32(b.Slice(0x38, 4), Metadata.ByteOrder), U32(b.Slice(0x3C, 4), Metadata.ByteOrder));
     private Slot ReadSlot(long position) { var b = new byte[EntrySize]; ReadAt(source, position, b, Metadata.PartitionOffset, Metadata.PartitionLength); return new Slot(position, b[0] is 0 or 0xFF or 0xE5 ? null : Parse(b), b[0] == 0xE5, b[0] is 0 or 0xFF); }
-    private void WriteEntry(long at, FatxDirectoryEntry e) { ValidateName(e.Name); var b = new byte[EntrySize]; b[0] = (byte)e.Name.Length; b[1] = e.Attributes; Ascii.GetBytes(e.Name, b.AsSpan(2)); Put32(b.AsSpan(0x2C), e.FirstCluster); Put32(b.AsSpan(0x30), e.FileSize); Put32(b.AsSpan(0x34), e.CreationTimestamp); Put32(b.AsSpan(0x38), e.LastWriteTimestamp); Put32(b.AsSpan(0x3C), e.LastAccessTimestamp); WriteAt(at, b); }
-    private void DeleteSlot(long at) => WriteAt(at, new byte[] { 0xE5 });
+    private void WriteEntry(long at, FatxDirectoryEntry e) { ValidateName(e.Name); var b = new byte[EntrySize]; b[0] = (byte)e.Name.Length; b[1] = e.Attributes; Ascii.GetBytes(e.Name, b.AsSpan(2)); Put32(b.AsSpan(0x2C), e.FirstCluster); Put32(b.AsSpan(0x30), e.FileSize); Put32(b.AsSpan(0x34), e.CreationTimestamp); Put32(b.AsSpan(0x38), e.LastWriteTimestamp); Put32(b.AsSpan(0x3C), e.LastAccessTimestamp); WriteAt(at, b); PatchDirectoryCaches(at, new Slot(at, e, false, false)); }
+    private void DeleteSlot(long at) { WriteAt(at, new byte[] { 0xE5 }); PatchDirectoryCaches(at, new Slot(at, null, true, false)); }
+    private void PatchDirectoryCaches(long position, Slot updated)
+    {
+        uint? extendedPastCache = null;
+        foreach ((uint directory, List<Slot> list) in directorySlotCache)
+        {
+            int index = list.FindIndex(s => s.Position == position);
+            if (index < 0) continue;
+            bool consumedNeverUsedSlot = list[index].Empty;
+            list[index] = updated;
+            if (consumedNeverUsedSlot && !updated.Empty)
+            {
+                long next = position + EntrySize;
+                long clusterStart = position - (position - Metadata.DataOffset) % ClusterSize;
+                if (next < clusterStart + ClusterSize) list.Add(new Slot(next, null, false, true));
+                else extendedPastCache = directory;
+            }
+            break;
+        }
+        if (extendedPastCache is uint directoryToRefresh) directorySlotCache.Remove(directoryToRefresh);
+    }
     private void ReadFileData(FatxDirectoryEntry e, long offset, Span<byte> target)
     {
         if (target.IsEmpty) return;
@@ -665,7 +696,7 @@ public sealed class FatxVolume
         if (found.Count != count) throw new IOException("The FATX partition is full.");
         return found.ToArray();
     }
-    private void FreeChain(uint first) { foreach (uint c in GetChain(first)) WriteFat(c, 0); chainCache.Remove(first); }
+    private void FreeChain(uint first) { foreach (uint c in GetChain(first)) WriteFat(c, 0); chainCache.Remove(first); directorySlotCache.Remove(first); }
     private List<uint> GetChain(uint first)
     {
         if (first == 0) return [];

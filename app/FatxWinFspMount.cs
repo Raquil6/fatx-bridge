@@ -348,7 +348,7 @@ public sealed class FatxWinFspFileSystem(FatxVolume volume, bool readOnly, strin
             // with FILE_DELETE_ON_CLOSE, so requiring a second private flag makes Explorer
             // report success while leaving the FATX directory entry behind.
             if ((flags & CleanupDelete) != 0 && fileNode is Node node)
-            { lock (node.Gate) { node.DiscardWriteBuffer(); DrainNodeWrites(node); if (node.IsDirectory) volume.DeleteDirectory(node.Path); else volume.DeleteFile(node.Path); } }
+            { lock (node.Gate) { node.DiscardWriteBuffer(); DrainNodeWrites(node); DeleteWithRetry(node); } }
             else if (fileNode is Node liveNode) lock (liveNode.Gate) FinalizePendingFileSize(liveNode);
             long flushStarted = Stopwatch.GetTimestamp(); volume.Flush();
             if (fileNode is Node cleanupNode)
@@ -357,7 +357,24 @@ public sealed class FatxWinFspFileSystem(FatxVolume volume, bool readOnly, strin
                 WritePerformanceLog(cleanupNode);
             }
         }
-        catch { /* WinFsp has already received the cleanup disposition. */ }
+        catch (Exception e) { Trace($"Cleanup {fileName} => delete failed permanently: {e}"); }
+    }
+    private void DeleteWithRetry(Node node)
+    {
+        const int maxAttempts = 5;
+        for (int attempt = 1; ; attempt++)
+        {
+            try
+            {
+                if (node.IsDirectory) volume.DeleteDirectory(node.Path); else volume.DeleteFile(node.Path);
+                return;
+            }
+            catch (IOException e) when (attempt < maxAttempts && e.Message.Contains("non-empty", StringComparison.OrdinalIgnoreCase))
+            {
+                Trace($"Cleanup {node.Path} => directory reported non-empty, retrying (attempt {attempt})");
+                Thread.Sleep(20 * attempt);
+            }
+        }
     }
     public override void Close(object fileNode, object fileDesc)
     {

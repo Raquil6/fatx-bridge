@@ -48,6 +48,7 @@ var tests = new (string Name, Action Run)[]
     ("4 KiB-aligned FATX writes", AlignedWrites),
     ("empty files retain a valid cluster and survive reopen", EmptyFileAndReopen),
     ("directory growth spans FATX clusters", DirectoryGrowth),
+    ("many small files in one directory stay near-linear", ManySmallFilesInOneDirectoryStayNearLinear),
     ("FATX packed timestamps", PackedTimestamps),
     ("original Xbox FATX timestamps use the 2000 epoch", OriginalXboxPackedTimestamps),
     ("directory descendant moves are refused", DescendantMoveRefusal),
@@ -759,6 +760,23 @@ static void DirectoryGrowth()
     for (int i = 0; i < 17; i++) volume.CreateFile($"/DIR/F{i:D2}");
     Assert(volume.EnumerateDirectory("/DIR").Count == 17, "directory did not expand into a second cluster");
     Assert(fixture.Open().EnumerateDirectory("/DIR").Count == 17, "expanded directory failed reopen validation");
+}
+
+static void ManySmallFilesInOneDirectoryStayNearLinear()
+{
+    var stream = new SparseStream(64 * 1024 * 1024);
+    using var fixture = FatxFixture.WriteVolume(stream, 0, stream.Length, FatxByteOrder.LittleEndian, 8);
+    FatxVolume volume = fixture.Open();
+    volume.CreateDirectory("/DIR");
+    const int count = 2000;
+
+    stream.ResetCounters();
+    for (int i = 0; i < count; i++) volume.CreateFile($"/DIR/F{i:D5}");
+
+    Assert(volume.EnumerateDirectory("/DIR").Count == count, "not every created file is visible in its own directory");
+    Assert(fixture.Open().EnumerateDirectory("/DIR").Count == count, "bulk-created directory failed reopen validation");
+    Assert(stream.ReadOperations < count * 4L,
+        $"creating {count} files in one directory issued {stream.ReadOperations} raw device reads - looks quadratic again");
 }
 
 static void PackedTimestamps()
